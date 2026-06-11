@@ -184,9 +184,12 @@
                     </div>
 
                     <div x-show="shiftWarnings.length == 0" class="has-text-centered has-text-grey py-5">
-                        <p class="is-size-5 mb-1">✅ 本班次暂无预警</p>
-                        <p class="is-size-7">系统运行状况良好，交接前请再次确认</p>
+                        <p class="is-size-5 mb-1">✅ 本班次发牌暂无相关预警</p>
+                        <p class="is-size-7">仅统计与本班次发放记录直接关联的预警，全局预警请前往预警中心查看</p>
                     </div>
+                    <p class="is-size-7 has-text-grey mt-2 mb-0" x-show="shiftWarnings.length > 0">
+                        * 仅展示与本班次发放记录直接关联的预警，全局类预警（如频繁遗失、连续补办等）请前往预警中心查看
+                    </p>
                 </div>
 
                 <div class="box card-table">

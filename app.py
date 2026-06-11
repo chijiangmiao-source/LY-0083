@@ -486,6 +486,7 @@ def api_wristbands():
 @require_login
 def api_create_wristband():
     data = request.json
+    user = get_session_user()
     exists = query_one("SELECT id FROM wristbands WHERE wristband_no = %s", (data['wristband_no'],))
     if exists:
         return json_response(None, False, '手牌编号已存在')
@@ -494,6 +495,16 @@ def api_create_wristband():
             "INSERT INTO wristbands (wristband_no, bath_area_id, current_status) VALUES (%s, %s, 'available')",
             (data['wristband_no'], data.get('bath_area_id'))
         )
+        new_band = query_one("SELECT * FROM wristbands WHERE wristband_no = %s", (data['wristband_no'],))
+        if new_band:
+            log_status_change(
+                wristband_id=new_band['id'],
+                old_status=None,
+                new_status='available',
+                change_reason='手牌创建',
+                operator_id=user['id'],
+                remark=data.get('bath_area_id') and f'初始浴区ID: {data.get("bath_area_id")}' or '未指定浴区'
+            )
         return json_response(None, True, '创建成功')
     except Exception as e:
         return json_response(None, False, str(e))
@@ -503,11 +514,29 @@ def api_create_wristband():
 @require_login
 def api_update_wristband(band_id):
     data = request.json
+    user = get_session_user()
     try:
+        band = query_one("SELECT * FROM wristbands WHERE id = %s", (band_id,))
+        if not band:
+            return json_response(None, False, '手牌不存在')
+        old_area_id = band['bath_area_id']
+        new_area_id = data.get('bath_area_id')
+        old_area = query_one("SELECT name FROM bath_areas WHERE id = %s", (old_area_id,)) if old_area_id else None
+        new_area = query_one("SELECT name FROM bath_areas WHERE id = %s", (new_area_id,)) if new_area_id else None
         execute(
             "UPDATE wristbands SET bath_area_id=%s WHERE id=%s",
-            (data.get('bath_area_id'), band_id)
+            (new_area_id, band_id)
         )
+        area_changed = (old_area_id or None) != (new_area_id or None)
+        if area_changed:
+            log_status_change(
+                wristband_id=band_id,
+                old_status=band['current_status'],
+                new_status=band['current_status'],
+                change_reason='浴区变更',
+                operator_id=user['id'],
+                remark=f'从 {old_area["name"] if old_area else "无"} 调整为 {new_area["name"] if new_area else "无"}'
+            )
         return json_response(None, True, '更新成功')
     except Exception as e:
         return json_response(None, False, str(e))
@@ -516,9 +545,20 @@ def api_update_wristband(band_id):
 @app.route('/api/wristbands/<band_id:int>', method='DELETE')
 @require_login
 def api_delete_wristband(band_id):
+    user = get_session_user()
     band = query_one("SELECT * FROM wristbands WHERE id = %s", (band_id,))
-    if band and band['current_status'] == 'issued':
+    if not band:
+        return json_response(None, False, '手牌不存在')
+    if band['current_status'] == 'issued':
         return json_response(None, False, '手牌已发放，无法删除')
+    log_status_change(
+        wristband_id=band_id,
+        old_status=band['current_status'],
+        new_status=None,
+        change_reason='手牌删除',
+        operator_id=user['id'],
+        remark=f'手牌编号: {band["wristband_no"]}'
+    )
     execute("DELETE FROM wristbands WHERE id = %s", (band_id,))
     return json_response(None, True, '删除成功')
 
@@ -961,9 +1001,10 @@ def shift_summary_page():
                 FROM warnings w
                 LEFT JOIN wristbands wr ON w.wristband_id = wr.id
                 LEFT JOIN bath_areas ba ON w.bath_area_id = ba.id
-                WHERE w.issue_record_id IN ({placeholders}) OR w.created_at >= %s
+                WHERE w.issue_record_id IN ({placeholders})
+                  AND w.issue_record_id IS NOT NULL
                 ORDER BY w.created_at DESC
-            ''', record_ids + [shift['start_time']])
+            ''', record_ids)
             shift_warnings = [dict(r) for r in rows]
     except Exception:
         pass
