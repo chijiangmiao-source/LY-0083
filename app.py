@@ -70,6 +70,20 @@ def generate_shift_no():
     return f"{prefix}{count['cnt'] + 1:03d}"
 
 
+def phone_has_unsettled_loss(phone):
+    if not phone:
+        return False, []
+    records = query('''
+        SELECT ir.*, ra.review_status, ra.id as reissue_id
+        FROM issue_records ir 
+        LEFT JOIN reissue_applications ra ON ra.issue_record_id = ir.id 
+        WHERE ir.phone = %s AND ir.lost_status = 'lost' AND ir.fee_status != 'settled'
+        ORDER BY ir.issue_time DESC
+    ''', (phone,))
+    has_issue = len(records) > 0
+    return has_issue, [dict(r) for r in records]
+
+
 def dict_to_json(data):
     if data is None:
         return None
@@ -150,12 +164,18 @@ def logout():
 @require_login
 def index():
     user = get_session_user()
+    def safe_count(sql, *params):
+        try:
+            r = query_one(sql, params)
+            return int(r['cnt']) if r else 0
+        except Exception:
+            return 0
     stats = {
-        'available_bands': query_one("SELECT COUNT(*) as cnt FROM wristbands WHERE current_status = 'available'")['cnt'],
-        'issued_bands': query_one("SELECT COUNT(*) as cnt FROM wristbands WHERE current_status = 'issued'")['cnt'],
-        'frozen_bands': query_one("SELECT COUNT(*) as cnt FROM wristbands WHERE current_status = 'frozen'")['cnt'],
-        'unsettled': query_one("SELECT COUNT(*) as cnt FROM issue_records WHERE fee_status = 'unsettled' AND return_time IS NULL")['cnt'],
-        'pending_review': query_one("SELECT COUNT(*) as cnt FROM reissue_applications WHERE review_status = 'pending'")['cnt'],
+        'available_bands': safe_count("SELECT COUNT(*) as cnt FROM wristbands WHERE current_status = 'available'"),
+        'issued_bands': safe_count("SELECT COUNT(*) as cnt FROM wristbands WHERE current_status = 'issued'"),
+        'frozen_bands': safe_count("SELECT COUNT(*) as cnt FROM wristbands WHERE current_status = 'frozen'"),
+        'unsettled': safe_count("SELECT COUNT(*) as cnt FROM issue_records WHERE fee_status = 'unsettled' AND return_time IS NULL"),
+        'pending_review': safe_count("SELECT COUNT(*) as cnt FROM reissue_applications WHERE review_status = 'pending'"),
     }
     return template('templates/index.html', user=user, stats=stats)
 
@@ -310,17 +330,8 @@ def api_check_phone():
     phone = request.query.get('phone', '')
     if not phone:
         return json_response({'can_issue': True})
-    records = query('''
-        SELECT ir.*, ra.review_status 
-        FROM issue_records ir 
-        LEFT JOIN reissue_applications ra ON ra.issue_record_id = ir.id 
-        WHERE ir.phone = %s AND (
-            (ir.lost_status = 'lost' AND (ra.review_status IS NULL OR ra.review_status != 'approved'))
-            OR (ir.lost_status = 'lost' AND ir.fee_status != 'settled')
-        )
-    ''', (phone,))
-    has_unsettled = any(r for r in records if r['fee_status'] != 'settled' and r['lost_status'] == 'lost')
-    return json_response({'can_issue': not has_unsettled, 'records': [dict(r) for r in records]})
+    has_issue, records = phone_has_unsettled_loss(phone)
+    return json_response({'can_issue': not has_issue, 'records': records})
 
 
 @app.route('/api/issue', method='POST')
@@ -338,12 +349,8 @@ def api_issue_band():
     if band['current_status'] != 'available':
         return json_response(None, False, '该手牌当前不可用')
 
-    check = query('''
-        SELECT ir.* FROM issue_records ir 
-        LEFT JOIN reissue_applications ra ON ra.issue_record_id = ir.id 
-        WHERE ir.phone = %s AND ir.lost_status = 'lost' AND ir.fee_status != 'settled'
-    ''', (phone,))
-    if check:
+    has_issue, _ = phone_has_unsettled_loss(phone)
+    if has_issue:
         return json_response(None, False, '该手机号存在未结清遗失记录，无法领牌')
 
     area = query_one("SELECT * FROM bath_areas WHERE id = %s", (band['bath_area_id'],))
@@ -551,6 +558,7 @@ def api_review_reissue(app_id):
         return json_response(None, True, '审核驳回成功')
 
     record = query_one("SELECT * FROM issue_records WHERE id = %s", (app['issue_record_id'],))
+    old_wristband_id = record['wristband_id'] if record else None
 
     execute('''
         UPDATE reissue_applications 
@@ -566,6 +574,11 @@ def api_review_reissue(app_id):
     if new_wristband_id:
         new_band = query_one("SELECT * FROM wristbands WHERE id = %s", (new_wristband_id,))
         if new_band and new_band['current_status'] == 'available':
+            if old_wristband_id and old_wristband_id != new_wristband_id:
+                execute(
+                    "UPDATE wristbands SET current_status = 'replaced' WHERE id = %s",
+                    (old_wristband_id,)
+                )
             execute(
                 "UPDATE wristbands SET current_status = 'issued', last_issued_at = %s WHERE id = %s",
                 (datetime.now(), new_wristband_id)

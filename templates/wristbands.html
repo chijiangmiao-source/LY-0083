@@ -10,6 +10,7 @@
         .tag-available { background-color: #48c78e !important; }
         .tag-issued { background-color: #3298dc !important; }
         .tag-frozen { background-color: #f14668 !important; }
+        .tag-replaced { background-color: #888888 !important; }
     </style>
 </head>
 <body style="background-color: #f5f5f5; min-height: 100vh;" x-data="wristbandApp()">
@@ -55,6 +56,7 @@
                             <option value="available">可用</option>
                             <option value="issued">已发放</option>
                             <option value="frozen">已冻结</option>
+                            <option value="replaced">已替换</option>
                         </select>
                     </div>
                 </div>
@@ -83,7 +85,7 @@
                             <td x-text="b.bath_area_name || '-'"></td>
                             <td x-text="b.deposit_status == 'paid' ? '已缴' : '未缴'"></td>
                             <td>
-                                <span class="tag" :class="'tag-' + b.current_status" x-text="{available:'可用', issued:'已发放', frozen:'已冻结'}[b.current_status]"></span>
+                                <span class="tag" :class="'tag-' + b.current_status" x-text="{available:'可用', issued:'已发放', frozen:'已冻结', replaced:'已替换'}[b.current_status]"></span>
                             </td>
                             <td x-text="b.last_issued_at || '-'"></td>
                             <td>
