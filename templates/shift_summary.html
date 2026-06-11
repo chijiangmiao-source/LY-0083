@@ -7,16 +7,26 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.0/dist/cdn.min.js"></script>
     <style>
+        body { background-color: #f5f5f5; min-height: 100vh; }
+        .navbar-brand-title { font-weight: 700; font-size: 1.2rem; }
         .tag-unsettled { background-color: #ff9f43 !important; }
         .tag-settled { background-color: #48c78e !important; }
         .tag-lost { background-color: #f14668 !important; }
         .tag-normal { background-color: #48c78e !important; }
+        .tag-level-high { background-color: #f14668 !important; color: #fff !important; }
+        .tag-level-medium { background-color: #ff9f43 !important; color: #fff !important; }
+        .tag-level-normal { background-color: #3298dc !important; color: #fff !important; }
+        .warning-card { border-left: 4px solid #f14668 !important; }
+        .warning-card.is-medium { border-left-color: #ff9f43 !important; }
+        .warning-card.is-normal { border-left-color: #3298dc !important; }
+        .warning-badge { display: inline-block; min-width: 22px; padding: 0 6px; line-height: 22px; text-align: center; border-radius: 11px; background: #f14668; color: #fff; font-size: 12px; font-weight: bold; margin-left: 4px; }
+        .card-table { overflow-x: auto; }
     </style>
 </head>
 <body style="background-color: #f5f5f5; min-height: 100vh;" x-data="shiftApp()">
 <nav class="navbar is-primary" role="navigation">
     <div class="navbar-brand">
-        <a class="navbar-item" style="font-weight:700;font-size:1.2rem;" href="/">🛁 澡堂手牌管理系统</a>
+        <a class="navbar-item navbar-brand-title" href="/">🛁 澡堂手牌管理系统</a>
     </div>
     <div class="navbar-menu">
         <div class="navbar-start">
@@ -27,6 +37,10 @@
             <a class="navbar-item" href="/return">退牌结算</a>
             <a class="navbar-item" href="/report-loss">遗失申报</a>
             <a class="navbar-item" href="/reissue-review">补办审核</a>
+            <a class="navbar-item" href="/wristband-tracking">手牌追踪</a>
+            <a class="navbar-item" href="/warnings">预警中心
+                <span class="warning-badge" x-show="warningStats && warningStats.total_unread > 0" x-text="warningStats.total_unread"></span>
+            </a>
             <a class="navbar-item is-active" href="/shift-summary">交接汇总</a>
         </div>
         <div class="navbar-end">
@@ -106,7 +120,76 @@
                     </div>
                 </div>
 
-                <div class="box" style="overflow-x:auto;">
+                <div class="box">
+                    <div class="columns is-mobile is-vcentered mb-0">
+                        <div class="column">
+                            <h2 class="subtitle mb-0">⚠️ 本班次预警信息
+                                <span class="warning-badge ml-2" x-show="shiftWarnings.length > 0" x-text="shiftWarnings.length"></span>
+                            </h2>
+                        </div>
+                        <div class="column is-narrow">
+                            <a class="button is-small is-info" href="/warnings">进入预警中心</a>
+                        </div>
+                    </div>
+
+                    <div class="columns mt-3 mb-3">
+                        <div class="column is-3">
+                            <div class="notification is-danger is-light py-3 px-3 mb-2">
+                                <p class="heading is-size-7">🔴 高级未读</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-danger" x-text="warningStats.high_count || 0"></p>
+                            </div>
+                        </div>
+                        <div class="column is-3">
+                            <div class="notification is-warning is-light py-3 px-3 mb-2">
+                                <p class="heading is-size-7">🟠 中级未读</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-warning-dark" x-text="warningStats.medium_count || 0"></p>
+                            </div>
+                        </div>
+                        <div class="column is-3">
+                            <div class="notification is-info is-light py-3 px-3 mb-2">
+                                <p class="heading is-size-7">🔵 一般未读</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-info" x-text="warningStats.normal_count || 0"></p>
+                            </div>
+                        </div>
+                        <div class="column is-3">
+                            <div class="notification is-dark is-light py-3 px-3 mb-2">
+                                <p class="heading is-size-7">⚙️ 待解决</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-dark" x-text="warningStats.unresolved_count || 0"></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div x-show="shiftWarnings.length > 0" style="max-height:300px;overflow-y:auto;">
+                        <template x-for="w in shiftWarnings" :key="w.id">
+                            <div class="card warning-card mb-3" :class="'is-' + w.warning_level">
+                                <div class="card-content py-3 px-4">
+                                    <div class="columns is-mobile is-vcentered mb-0">
+                                        <div class="column">
+                                            <span class="tag is-small mr-2" :class="'tag-level-' + w.warning_level" x-text="levelText(w.warning_level)"></span>
+                                            <span class="tag is-small mr-2" x-text="typeText(w.warning_type)"></span>
+                                            <span class="has-text-weight-semibold" x-text="w.title"></span>
+                                            <span class="warning-badge ml-2" x-show="!w.is_read">!</span>
+                                        </div>
+                                        <div class="column is-narrow is-size-7 has-text-grey" x-text="formatTime(w.created_at)"></div>
+                                    </div>
+                                    <p class="is-size-7 has-text-grey-dark mt-2 mb-1" x-text="w.content"></p>
+                                    <div class="is-size-7" x-show="w.wristband_no || w.bath_area_name">
+                                        <span class="has-text-grey" x-show="w.wristband_no">手牌: <strong x-text="w.wristband_no"></strong>&nbsp;&nbsp;</span>
+                                        <span class="has-text-grey" x-show="w.bath_area_name">浴区: <span x-text="w.bath_area_name"></span>&nbsp;&nbsp;</span>
+                                        <span class="has-text-grey" x-show="w.phone">手机: <span x-text="w.phone"></span></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+
+                    <div x-show="shiftWarnings.length == 0" class="has-text-centered has-text-grey py-5">
+                        <p class="is-size-5 mb-1">✅ 本班次暂无预警</p>
+                        <p class="is-size-7">系统运行状况良好，交接前请再次确认</p>
+                    </div>
+                </div>
+
+                <div class="box card-table">
                     <h2 class="subtitle">当班发牌明细</h2>
                     <table class="table is-fullwidth is-striped">
                         <thead>
@@ -152,6 +235,8 @@ function shiftApp() {
         shift: null,
         records: [],
         summary: null,
+        warningStats: !{warning_stats_json},
+        shiftWarnings: !{shift_warnings_json},
         init() {
             this.shift = {{!shift_json}};
             this.records = {{!records_json}};
@@ -162,6 +247,25 @@ function shiftApp() {
             const r = await fetch('/api/shift/close', { method: 'POST' });
             const d = await r.json(); alert(d.message);
             if (d.success) { location.reload(); }
+        },
+        typeText(t) {
+            const m = {
+                'long_unreturned':'长时间未退',
+                'frequent_loss':'频繁遗失',
+                'continuous_reissue':'连续补办',
+                'frozen_misuse':'冻结误操作'
+            };
+            return m[t] || t;
+        },
+        levelText(l) {
+            const m = {'high':'高级','medium':'中级','normal':'一般'};
+            return m[l] || l;
+        },
+        formatTime(t) {
+            if (!t) return '';
+            const d = new Date(t);
+            return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+                + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
         }
     };
 }

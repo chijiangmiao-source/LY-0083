@@ -90,6 +90,53 @@ INSERT INTO users (username, password_hash, full_name, role) VALUES
     ('admin', 'pbkdf2:sha256:260000$admin$f5d57f628ef48f4484f033ddcbf0dfe753a49284b58623e7ba1db67e0b80f824', '系统管理员', 'admin')
 ON CONFLICT (username) DO NOTHING;
 
+-- 手牌状态变更记录表
+CREATE TABLE IF NOT EXISTS wristband_status_logs (
+    id SERIAL PRIMARY KEY,
+    wristband_id INTEGER REFERENCES wristbands(id) NOT NULL,
+    issue_record_id INTEGER REFERENCES issue_records(id),
+    old_status VARCHAR(20),
+    new_status VARCHAR(20) NOT NULL,
+    change_reason VARCHAR(100) NOT NULL,
+    operator_id INTEGER REFERENCES users(id),
+    phone VARCHAR(20),
+    customer_name VARCHAR(100),
+    remark TEXT,
+    change_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_wsl_wristband_id ON wristband_status_logs(wristband_id);
+CREATE INDEX IF NOT EXISTS idx_wsl_change_time ON wristband_status_logs(change_time);
+CREATE INDEX IF NOT EXISTS idx_wsl_issue_record_id ON wristband_status_logs(issue_record_id);
+
+-- 异常预警记录表
+CREATE TABLE IF NOT EXISTS warnings (
+    id SERIAL PRIMARY KEY,
+    warning_type VARCHAR(50) NOT NULL,
+    warning_level VARCHAR(20) NOT NULL DEFAULT 'normal',
+    title VARCHAR(200) NOT NULL,
+    content TEXT NOT NULL,
+    wristband_id INTEGER REFERENCES wristbands(id),
+    issue_record_id INTEGER REFERENCES issue_records(id),
+    bath_area_id INTEGER REFERENCES bath_areas(id),
+    phone VARCHAR(20),
+    related_data JSONB,
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    is_resolved BOOLEAN NOT NULL DEFAULT FALSE,
+    read_by INTEGER REFERENCES users(id),
+    read_time TIMESTAMP,
+    resolved_by INTEGER REFERENCES users(id),
+    resolved_time TIMESTAMP,
+    resolve_note TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_warnings_type ON warnings(warning_type);
+CREATE INDEX IF NOT EXISTS idx_warnings_level ON warnings(warning_level);
+CREATE INDEX IF NOT EXISTS idx_warnings_created ON warnings(created_at);
+CREATE INDEX IF NOT EXISTS idx_warnings_read ON warnings(is_read);
+CREATE INDEX IF NOT EXISTS idx_warnings_resolved ON warnings(is_resolved);
+
 -- 创建默认浴区
 INSERT INTO bath_areas (name, description, base_price, deposit_amount) VALUES
     ('男宾区', '男士洗浴区域', 38.00, 100.00),

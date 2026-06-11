@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>预警中心 - 澡堂手牌管理系统</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.0/dist/cdn.min.js"></script>
+    <style>
+        body { background-color: #f5f5f5; min-height: 100vh; }
+        .navbar-brand-title { font-weight: 700; font-size: 1.2rem; }
+        .tag-available { background-color: #48c78e !important; }
+        .tag-issued { background-color: #3298dc !important; }
+        .tag-frozen { background-color: #f14668 !important; }
+        .tag-replaced { background-color: #7b61ff !important; }
+        .tag-level-high { background-color: #f14668 !important; color: #fff !important; }
+        .tag-level-medium { background-color: #ff9f43 !important; color: #fff !important; }
+        .tag-level-normal { background-color: #3298dc !important; color: #fff !important; }
+        .warning-card { border-left: 4px solid #f14668 !important; }
+        .warning-card.is-medium { border-left-color: #ff9f43 !important; }
+        .warning-card.is-normal { border-left-color: #3298dc !important; }
+        .card-table { overflow-x: auto; }
+    </style>
+</head>
+<body x-data="warningsApp()">
+<nav class="navbar is-primary" role="navigation">
+    <div class="navbar-brand">
+        <a class="navbar-item navbar-brand-title" href="/">🛁 澡堂手牌管理系统</a>
+    </div>
+    <div class="navbar-menu">
+        <div class="navbar-start">
+            <a class="navbar-item" href="/">首页</a>
+            <a class="navbar-item" href="/bath-areas">浴区管理</a>
+            <a class="navbar-item" href="/wristbands">手牌配置</a>
+            <a class="navbar-item" href="/issue">入场发牌</a>
+            <a class="navbar-item" href="/return">退牌结算</a>
+            <a class="navbar-item" href="/report-loss">遗失申报</a>
+            <a class="navbar-item" href="/reissue-review">补办审核</a>
+            <a class="navbar-item" href="/wristband-tracking">手牌追踪</a>
+            <a class="navbar-item is-active" href="/warnings">预警中心</a>
+            <a class="navbar-item" href="/shift-summary">交接汇总</a>
+        </div>
+        <div class="navbar-end">
+            <div class="navbar-item">
+                <span class="mr-3">欢迎，{{user['full_name']}}</span>
+                <a class="button is-light" href="/logout">退出登录</a>
+            </div>
+        </div>
+    </div>
+</nav>
+<section class="section">
+    <div class="container">
+        <div class="columns is-mobile is-vcentered">
+            <div class="column">
+                <h1 class="title">预警中心</h1>
+            </div>
+            <div class="column is-narrow">
+                <button class="button is-warning mr-2" @click="refreshWarnings()">
+                    <span class="icon is-small">🔄</span><span>刷新检测</span>
+                </button>
+                <button class="button is-info" @click="markAllRead()" :disabled="stats.total_unread == 0">
+                    <span class="icon is-small">📖</span><span>全部已读</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="columns mb-4">
+            <div class="column">
+                <div class="notification is-danger">
+                    <p class="heading">高级预警（未读）</p>
+                    <p class="title" x-text="stats.high_count || 0"></p>
+                </div>
+            </div>
+            <div class="column">
+                <div class="notification is-warning">
+                    <p class="heading">中级预警（未读）</p>
+                    <p class="title" x-text="stats.medium_count || 0"></p>
+                </div>
+            </div>
+            <div class="column">
+                <div class="notification is-info">
+                    <p class="heading">一般预警（未读）</p>
+                    <p class="title" x-text="stats.normal_count || 0"></p>
+                </div>
+            </div>
+            <div class="column">
+                <div class="notification is-dark">
+                    <p class="heading">未解决总数</p>
+                    <p class="title" x-text="stats.unresolved_count || 0"></p>
+                </div>
+            </div>
+        </div>
+
+        <div class="box">
+            <div class="columns">
+                <div class="column is-2">
+                    <label class="label">预警类型</label>
+                    <div class="select is-fullwidth">
+                        <select x-model="filterType" @change="loadWarnings()">
+                            <option value="">全部类型</option>
+                            <template x-for="t in types" :key="t.type">
+                                <option :value="t.type" x-text="t.name"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+                <div class="column is-2">
+                    <label class="label">预警级别</label>
+                    <div class="select is-fullwidth">
+                        <select x-model="filterLevel" @change="loadWarnings()">
+                            <option value="">全部级别</option>
+                            <option value="high">高级</option>
+                            <option value="medium">中级</option>
+                            <option value="normal">一般</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="column is-2">
+                    <label class="label">已读状态</label>
+                    <div class="select is-fullwidth">
+                        <select x-model="filterRead" @change="loadWarnings()">
+                            <option value="">全部</option>
+                            <option value="false">未读</option>
+                            <option value="true">已读</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="column is-2">
+                    <label class="label">解决状态</label>
+                    <div class="select is-fullwidth">
+                        <select x-model="filterResolved" @change="loadWarnings()">
+                            <option value="">全部</option>
+                            <option value="false">未解决</option>
+                            <option value="true">已解决</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="column is-4">
+                    <label class="label">搜索</label>
+                    <input class="input" type="text" x-model="searchKeyword" @input.debounce.300ms="loadWarnings()" placeholder="按标题、内容、手牌编号搜索...">
+                </div>
+            </div>
+        </div>
+
+        <div class="card-table">
+            <table class="table is-fullwidth is-striped">
+                <thead>
+                    <tr>
+                        <th style="width:60px;">级别</th>
+                        <th style="width:140px;">类型</th>
+                        <th>标题</th>
+                        <th style="width:180px;">相关手牌/浴区</th>
+                        <th style="width:160px;">创建时间</th>
+                        <th style="width:100px;">状态</th>
+                        <th style="width:240px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="w in warnings" :key="w.id">
+                        <tr>
+                            <td>
+                                <span class="tag is-medium" :class="'tag-level-' + w.warning_level" x-text="levelText(w.warning_level)"></span>
+                            </td>
+                            <td x-text="typeText(w.warning_type)"></td>
+                            <td>
+                                <div>
+                                    <span class="has-text-weight-semibold" x-text="w.title"></span>
+                                    <span class="warning-badge ml-2" x-show="!w.is_read">!</span>
+                                </div>
+                                <div class="is-size-7 has-text-grey mt-1" x-text="w.content"></div>
+                            </td>
+                            <td>
+                                <div class="is-size-7" x-show="w.wristband_no">
+                                    <span class="has-text-grey">手牌：</span>
+                                    <a :href="'/wristband-tracking#' + w.wristband_id" class="has-text-link has-text-weight-semibold" x-text="w.wristband_no"></a>
+                                </div>
+                                <div class="is-size-7" x-show="w.bath_area_name">
+                                    <span class="has-text-grey">浴区：</span>
+                                    <span x-text="w.bath_area_name"></span>
+                                </div>
+                                <div class="is-size-7" x-show="w.phone">
+                                    <span class="has-text-grey">手机：</span>
+                                    <span x-text="w.phone"></span>
+                                </div>
+                            </td>
+                            <td class="is-size-7" x-text="formatTime(w.created_at)"></td>
+                            <td>
+                                <div>
+                                    <span class="tag is-small mr-1" :class="w.is_read ? 'tag-settled' : 'tag-unsettled'" x-text="w.is_read ? '已读' : '未读'"></span>
+                                    <span class="tag is-small" :class="w.is_resolved ? 'tag-settled' : 'tag-pending'" x-text="w.is_resolved ? '已解决' : '未解决'"></span>
+                                </div>
+                                <div class="is-size-7 has-text-grey mt-1" x-show="w.read_by_name">
+                                    已读：<span x-text="w.read_by_name"></span>
+                                </div>
+                                <div class="is-size-7 has-text-grey" x-show="w.resolved_by_name">
+                                    解决：<span x-text="w.resolved_by_name"></span>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="buttons are-small">
+                                    <button class="button is-info" @click="viewDetail(w)" x-show="!w.is_read">标记已读</button>
+                                    <button class="button is-success" @click="openResolve(w)" x-show="!w.is_resolved">标记解决</button>
+                                    <button class="button is-danger is-light" @click="deleteWarning(w)">删除</button>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <div x-show="warnings.length == 0" class="has-text-centered has-text-grey py-6 box">
+                暂无预警记录
+            </div>
+        </div>
+    </div>
+</section>
+
+<div x-show="showResolveModal" class="modal is-active">
+    <div class="modal-background" @click="showResolveModal = false"></div>
+    <div class="modal-card">
+        <header class="modal-card-head">
+            <p class="modal-card-title">标记预警为已解决</p>
+            <button class="delete" @click="showResolveModal = false"></button>
+        </header>
+        <section class="modal-card-body">
+            <div class="notification is-light mb-4">
+                <div class="mb-1">
+                    <span class="tag mr-2" :class="'tag-level-' + (resolveWarning ? resolveWarning.warning_level : 'normal')" x-text="resolveWarning ? levelText(resolveWarning.warning_level) : ''"></span>
+                    <span class="has-text-weight-semibold" x-text="resolveWarning ? resolveWarning.title : ''"></span>
+                </div>
+                <div class="is-size-7 has-text-grey" x-text="resolveWarning ? resolveWarning.content : ''"></div>
+            </div>
+            <label class="label">处理说明</label>
+            <textarea class="textarea" x-model="resolveNote" rows="3" placeholder="请输入处理说明（选填）"></textarea>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button is-success" @click="doResolve()">确认解决</button>
+            <button class="button" @click="showResolveModal = false">取消</button>
+        </footer>
+    </div>
+</div>
+
+<script>
+function warningsApp() {
+    return {
+        warnings: [],
+        types: [],
+        stats: {total_unread:0, high_count:0, medium_count:0, normal_count:0, unresolved_count:0},
+        filterType: '',
+        filterLevel: '',
+        filterRead: '',
+        filterResolved: '',
+        searchKeyword: '',
+        showResolveModal: false,
+        resolveWarning: null,
+        resolveNote: '',
+        async init() {
+            await Promise.all([this.loadTypes(), this.loadWarnings(), this.loadStats()]);
+        },
+        async loadTypes() {
+            try {
+                const res = await fetch('/api/warnings/types');
+                const data = await res.json();
+                if (data.success) this.types = data.data || [];
+            } catch(e) {}
+        },
+        async loadStats() {
+            try {
+                const res = await fetch('/api/warnings/stats');
+                const data = await res.json();
+                if (data.success) this.stats = data.data || this.stats;
+            } catch(e) {}
+        },
+        async loadWarnings() {
+            let url = '/api/warnings?limit=200';
+            if (this.filterType) url += '&type=' + this.filterType;
+            if (this.filterLevel) url += '&level=' + this.filterLevel;
+            if (this.filterRead) url += '&is_read=' + this.filterRead;
+            if (this.filterResolved) url += '&is_resolved=' + this.filterResolved;
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                if (data.success) {
+                    let list = data.data || [];
+                    if (this.searchKeyword) {
+                        const kw = this.searchKeyword.toLowerCase();
+                        list = list.filter(w =>
+                            (w.title || '').toLowerCase().includes(kw) ||
+                            (w.content || '').toLowerCase().includes(kw) ||
+                            (w.wristband_no || '').toLowerCase().includes(kw) ||
+                            (w.phone || '').toLowerCase().includes(kw)
+                        );
+                    }
+                    this.warnings = list;
+                }
+            } catch(e) { console.error(e); }
+        },
+        async refreshWarnings() {
+            try {
+                await fetch('/api/warnings/refresh', {method:'POST'});
+                await Promise.all([this.loadWarnings(), this.loadStats()]);
+                alert('预警检测完成');
+            } catch(e) {}
+        },
+        async viewDetail(w) {
+            try {
+                await fetch('/api/warnings/' + w.id + '/read', {method:'POST'});
+                await Promise.all([this.loadWarnings(), this.loadStats()]);
+            } catch(e) {}
+        },
+        async markAllRead() {
+            if (!confirm('确定将所有预警标记为已读吗？')) return;
+            try {
+                await fetch('/api/warnings/read-all', {method:'POST'});
+                await Promise.all([this.loadWarnings(), this.loadStats()]);
+            } catch(e) {}
+        },
+        openResolve(w) {
+            this.resolveWarning = w;
+            this.resolveNote = '';
+            this.showResolveModal = true;
+        },
+        async doResolve() {
+            if (!this.resolveWarning) return;
+            try {
+                await fetch('/api/warnings/' + this.resolveWarning.id + '/resolve', {
+                    method:'POST',
+                    headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({resolve_note: this.resolveNote})
+                });
+                this.showResolveModal = false;
+                await Promise.all([this.loadWarnings(), this.loadStats()]);
+            } catch(e) {}
+        },
+        async deleteWarning(w) {
+            if (!confirm('确定删除该预警吗？')) return;
+            try {
+                await fetch('/api/warnings/' + w.id, {method:'DELETE'});
+                await Promise.all([this.loadWarnings(), this.loadStats()]);
+            } catch(e) {}
+        },
+        typeText(t) {
+            const m = {
+                'long_unreturned':'长时间未退',
+                'frequent_loss':'频繁遗失',
+                'continuous_reissue':'连续补办',
+                'frozen_misuse':'冻结误操作'
+            };
+            return m[t] || t;
+        },
+        levelText(l) {
+            const m = {'high':'高级','medium':'中级','normal':'一般'};
+            return m[l] || l;
+        },
+        formatTime(t) {
+            if (!t) return '';
+            const d = new Date(t);
+            return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+                + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+        }
+    }
+}
+</script>
+</body>
+</html>

@@ -5,21 +5,42 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>首页 - 澡堂手牌管理系统</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.0/dist/cdn.min.js"></script>
+    <style>
+        body { background-color: #f5f5f5; min-height: 100vh; }
+        .navbar-brand-title { font-weight: 700; font-size: 1.2rem; }
+        .tag-available { background-color: #48c78e !important; }
+        .tag-issued { background-color: #3298dc !important; }
+        .tag-frozen { background-color: #f14668 !important; }
+        .tag-replaced { background-color: #7b61ff !important; }
+        .tag-level-high { background-color: #f14668 !important; color: #fff !important; }
+        .tag-level-medium { background-color: #ff9f43 !important; color: #fff !important; }
+        .tag-level-normal { background-color: #3298dc !important; color: #fff !important; }
+        .warning-card { border-left: 4px solid #f14668 !important; }
+        .warning-card.is-medium { border-left-color: #ff9f43 !important; }
+        .warning-card.is-normal { border-left-color: #3298dc !important; }
+        .warning-badge { display: inline-block; min-width: 22px; padding: 0 6px; line-height: 22px; text-align: center; border-radius: 11px; background: #f14668; color: #fff; font-size: 12px; font-weight: bold; margin-left: 4px; }
+        .scroll-warning-list { max-height: 420px; overflow-y: auto; }
+    </style>
 </head>
-<body style="background-color: #f5f5f5; min-height: 100vh;">
+<body x-data="indexApp()" style="background-color: #f5f5f5; min-height: 100vh;">
 <nav class="navbar is-primary" role="navigation">
     <div class="navbar-brand">
-        <a class="navbar-item" style="font-weight:700;font-size:1.2rem;" href="/">🛁 澡堂手牌管理系统</a>
+        <a class="navbar-item navbar-brand-title" href="/">🛁 澡堂手牌管理系统</a>
     </div>
     <div class="navbar-menu">
         <div class="navbar-start">
-            <a class="navbar-item" href="/">首页</a>
+            <a class="navbar-item is-active" href="/">首页</a>
             <a class="navbar-item" href="/bath-areas">浴区管理</a>
             <a class="navbar-item" href="/wristbands">手牌配置</a>
             <a class="navbar-item" href="/issue">入场发牌</a>
             <a class="navbar-item" href="/return">退牌结算</a>
             <a class="navbar-item" href="/report-loss">遗失申报</a>
             <a class="navbar-item" href="/reissue-review">补办审核</a>
+            <a class="navbar-item" href="/wristband-tracking">手牌追踪</a>
+            <a class="navbar-item" href="/warnings">预警中心
+                <span class="warning-badge" x-show="warningStats && warningStats.total_unread > 0" x-text="warningStats.total_unread"></span>
+            </a>
             <a class="navbar-item" href="/shift-summary">交接汇总</a>
         </div>
         <div class="navbar-end">
@@ -65,6 +86,7 @@
                 </div>
             </div>
         </div>
+
         <div class="box">
             <h2 class="subtitle">快捷操作</h2>
             <div class="buttons">
@@ -72,10 +94,179 @@
                 <a class="button is-info is-medium" href="/return">退牌结算</a>
                 <a class="button is-warning is-medium" href="/report-loss">遗失申报</a>
                 <a class="button is-success is-medium" href="/reissue-review">补办审核</a>
-                <a class="button is-link is-medium" href="/shift-summary">交接汇总</a>
+                <a class="button is-link is-medium" href="/wristband-tracking">手牌追踪</a>
+                <a class="button is-danger is-medium" href="/warnings">预警中心
+                    <span class="warning-badge" x-show="warningStats && warningStats.total_unread > 0" x-text="warningStats.total_unread"></span>
+                </a>
+                <a class="button is-dark is-medium" href="/shift-summary">交接汇总</a>
+            </div>
+        </div>
+
+        <div class="columns">
+            <div class="column is-5">
+                <div class="box">
+                    <div class="columns is-mobile is-vcentered mb-0">
+                        <div class="column">
+                            <h2 class="subtitle mb-0">⚠️ 预警统计
+                                <span class="warning-badge" x-show="warningStats && warningStats.total_unread > 0" x-text="warningStats.total_unread"></span>
+                            </h2>
+                        </div>
+                        <div class="column is-narrow">
+                            <button class="button is-small is-warning" @click="refresh()">刷新</button>
+                        </div>
+                    </div>
+                    <div class="columns mt-2 mb-2">
+                        <div class="column is-6">
+                            <div class="notification is-danger is-light py-3 px-3 mb-2">
+                                <p class="heading is-size-7">🔴 高级未读</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-danger" x-text="warningStats.high_count || 0"></p>
+                            </div>
+                        </div>
+                        <div class="column is-6">
+                            <div class="notification is-warning is-light py-3 px-3 mb-2">
+                                <p class="heading is-size-7">🟠 中级未读</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-warning-dark" x-text="warningStats.medium_count || 0"></p>
+                            </div>
+                        </div>
+                        <div class="column is-6">
+                            <div class="notification is-info is-light py-3 px-3 mb-2">
+                                <p class="heading is-size-7">🔵 一般未读</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-info" x-text="warningStats.normal_count || 0"></p>
+                            </div>
+                        </div>
+                        <div class="column is-6">
+                            <div class="notification is-dark is-light py-3 px-3 mb-2">
+                                <p class="heading is-size-7">⚙️ 待解决</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-dark" x-text="warningStats.unresolved_count || 0"></p>
+                            </div>
+                        </div>
+                    </div>
+                    <a class="button is-fullwidth is-outlined is-danger" href="/warnings">
+                        <span>进入预警中心处理 →</span>
+                    </a>
+                </div>
+            </div>
+
+            <div class="column is-7">
+                <div class="box">
+                    <div class="columns is-mobile is-vcentered mb-0">
+                        <div class="column">
+                            <h2 class="subtitle mb-0">📋 最近预警信息</h2>
+                        </div>
+                        <div class="column is-narrow">
+                            <button class="button is-small is-info" @click="markAllRead()" :disabled="warningStats && warningStats.total_unread == 0">全部已读</button>
+                        </div>
+                    </div>
+                    <div class="scroll-warning-list mt-3">
+                        <template x-for="w in recentWarnings" :key="w.id">
+                            <div class="card warning-card mb-3" :class="'is-' + w.warning_level">
+                                <div class="card-content py-3 px-4">
+                                    <div class="columns is-mobile is-vcentered mb-0">
+                                        <div class="column">
+                                            <span class="tag is-small mr-2" :class="'tag-level-' + w.warning_level" x-text="levelText(w.warning_level)"></span>
+                                            <span class="tag is-small mr-2" x-text="typeText(w.warning_type)"></span>
+                                            <span class="has-text-weight-semibold" x-text="w.title"></span>
+                                            <span class="warning-badge ml-2" x-show="!w.is_read">!</span>
+                                        </div>
+                                        <div class="column is-narrow is-size-7 has-text-grey" x-text="formatTime(w.created_at)"></div>
+                                    </div>
+                                    <p class="is-size-7 has-text-grey-dark mt-2 mb-2" x-text="w.content"></p>
+                                    <div class="columns is-mobile is-multiline is-vcentered mb-0">
+                                        <div class="column is-narrow is-size-7" x-show="w.wristband_no">
+                                            <span class="has-text-grey">手牌：</span>
+                                            <a :href="'/wristband-tracking?id=' + w.wristband_id" class="has-text-link has-text-weight-semibold" @click.stop="" x-text="w.wristband_no"></a>
+                                        </div>
+                                        <div class="column is-narrow is-size-7" x-show="w.bath_area_name">
+                                            <span class="has-text-grey">浴区：</span><span x-text="w.bath_area_name"></span>
+                                        </div>
+                                        <div class="column is-narrow is-size-7" x-show="w.phone">
+                                            <span class="has-text-grey">手机：</span><span x-text="w.phone"></span>
+                                        </div>
+                                        <div class="column is-narrow">
+                                            <button class="button is-small is-text is-info py-1 px-2" x-show="!w.is_read" @click="markRead(w)">标记已读</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                        <div x-show="recentWarnings.length == 0" class="has-text-centered has-text-grey py-6">
+                            <p class="is-size-5 mb-1">✅ 暂无预警信息</p>
+                            <p class="is-size-7">系统运行状况良好</p>
+                        </div>
+                    </div>
+                    <div x-show="recentWarnings.length > 0" class="mt-3">
+                        <a class="button is-fullwidth is-text is-link is-small" href="/warnings">查看全部预警 →</a>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 </section>
+
+<script>
+function indexApp() {
+    return {
+        warningStats: !{warning_stats_json || '{}'},
+        recentWarnings: !{recent_warnings_json || '[]'},
+        async refresh() {
+            try {
+                await fetch('/api/warnings/refresh', {method:'POST'});
+                const statsRes = await fetch('/api/warnings/stats');
+                const statsData = await statsRes.json();
+                if (statsData.success) this.warningStats = statsData.data;
+                const listRes = await fetch('/api/warnings?limit=20');
+                const listData = await listRes.json();
+                if (listData.success) this.recentWarnings = listData.data || [];
+            } catch(e) { console.error(e); }
+        },
+        async markRead(w) {
+            try {
+                await fetch('/api/warnings/' + w.id + '/read', {method:'POST'});
+                const idx = this.recentWarnings.findIndex(x => x.id == w.id);
+                if (idx >= 0) this.recentWarnings[idx].is_read = true;
+                if (this.warningStats) {
+                    this.warningStats.total_unread = Math.max(0, (this.warningStats.total_unread || 0) - 1);
+                    const key = w.warning_level + '_count';
+                    if (this.warningStats[key] !== undefined) {
+                        this.warningStats[key] = Math.max(0, this.warningStats[key] - 1);
+                    }
+                }
+            } catch(e) {}
+        },
+        async markAllRead() {
+            if (!confirm('确定将所有预警标记为已读吗？')) return;
+            try {
+                await fetch('/api/warnings/read-all', {method:'POST'});
+                this.recentWarnings.forEach(w => w.is_read = true);
+                if (this.warningStats) {
+                    this.warningStats.total_unread = 0;
+                    this.warningStats.high_count = 0;
+                    this.warningStats.medium_count = 0;
+                    this.warningStats.normal_count = 0;
+                }
+            } catch(e) {}
+        },
+        typeText(t) {
+            const m = {
+                'long_unreturned':'长时间未退',
+                'frequent_loss':'频繁遗失',
+                'continuous_reissue':'连续补办',
+                'frozen_misuse':'冻结误操作'
+            };
+            return m[t] || t;
+        },
+        levelText(l) {
+            const m = {'high':'高级','medium':'中级','normal':'一般'};
+            return m[l] || l;
+        },
+        formatTime(t) {
+            if (!t) return '';
+            const d = new Date(t);
+            return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+                + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+        }
+    }
+}
+</script>
 </body>
 </html>

@@ -84,6 +84,206 @@ def phone_has_unsettled_loss(phone):
     return has_issue, [dict(r) for r in records]
 
 
+def log_status_change(wristband_id, new_status, change_reason, old_status=None,
+                      issue_record_id=None, operator_id=None, phone=None,
+                      customer_name=None, remark=None, change_time=None):
+    if change_time is None:
+        change_time = datetime.now()
+    execute('''
+        INSERT INTO wristband_status_logs
+        (wristband_id, issue_record_id, old_status, new_status, change_reason,
+         operator_id, phone, customer_name, remark, change_time)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ''', (wristband_id, issue_record_id, old_status, new_status, change_reason,
+          operator_id, phone, customer_name, remark, change_time))
+
+
+def create_warning(warning_type, title, content, warning_level='normal',
+                   wristband_id=None, issue_record_id=None, bath_area_id=None,
+                   phone=None, related_data=None):
+    import json as _json
+    data_json = _json.dumps(related_data, ensure_ascii=False) if related_data else None
+    execute('''
+        INSERT INTO warnings
+        (warning_type, warning_level, title, content, wristband_id,
+         issue_record_id, bath_area_id, phone, related_data)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ''', (warning_type, warning_level, title, content, wristband_id,
+          issue_record_id, bath_area_id, phone, data_json))
+
+
+def check_long_unreturned():
+    from datetime import timedelta
+    threshold_hours = 12
+    threshold = datetime.now() - timedelta(hours=threshold_hours)
+    records = query('''
+        SELECT ir.*, w.wristband_no, ba.name as bath_area_name, u.full_name as operator_name
+        FROM issue_records ir
+        LEFT JOIN wristbands w ON ir.wristband_id = w.id
+        LEFT JOIN bath_areas ba ON ir.bath_area_id = ba.id
+        LEFT JOIN users u ON ir.operator_id = u.id
+        WHERE ir.return_time IS NULL AND ir.issue_time < %s
+        ORDER BY ir.issue_time ASC
+    ''', (threshold,))
+    for r in records:
+        existing = query_one('''
+            SELECT id FROM warnings
+            WHERE warning_type = 'long_unreturned' AND issue_record_id = %s AND is_resolved = FALSE
+        ''', (r['id'],))
+        if not existing:
+            hours = int((datetime.now() - r['issue_time']).total_seconds() / 3600)
+            create_warning(
+                warning_type='long_unreturned',
+                warning_level='high',
+                title=f'手牌[{r["wristband_no"]}]长时间未退回',
+                content=f'手牌编号: {r["wristband_no"]}, 浴区: {r["bath_area_name"]}, '
+                        f'客户: {r["customer_name"]}({r["phone"]}), '
+                        f'发牌时间: {r["issue_time"].strftime("%Y-%m-%d %H:%M")}, '
+                        f'已使用 {hours} 小时, 发牌操作员: {r["operator_name"]}',
+                wristband_id=r['wristband_id'],
+                issue_record_id=r['id'],
+                bath_area_id=r['bath_area_id'],
+                phone=r['phone'],
+                related_data={'hours': hours, 'wristband_no': r['wristband_no']}
+            )
+
+
+def check_frequent_loss():
+    from datetime import timedelta
+    days_threshold = 30
+    count_threshold = 2
+    since = datetime.now() - timedelta(days=days_threshold)
+    result = query('''
+        SELECT phone, COUNT(*) as loss_count,
+               ARRAY_AGG(ir.id) as record_ids,
+               ARRAY_AGG(w.wristband_no) as wristband_nos
+        FROM issue_records ir
+        LEFT JOIN wristbands w ON ir.wristband_id = w.id
+        WHERE ir.lost_status = 'lost' AND ir.created_at >= %s AND ir.phone != ''
+        GROUP BY phone
+        HAVING COUNT(*) >= %s
+    ''', (since, count_threshold))
+    for r in result:
+        existing = query_one('''
+            SELECT id FROM warnings
+            WHERE warning_type = 'frequent_loss' AND phone = %s AND is_resolved = FALSE
+              AND created_at >= %s
+        ''', (r['phone'], since))
+        if not existing:
+            create_warning(
+                warning_type='frequent_loss',
+                warning_level='high',
+                title=f'手机号[{r["phone"]}]短期内频繁遗失',
+                content=f'手机号 {r["phone"]} 在 {days_threshold} 天内申报遗失 {r["loss_count"]} 次, '
+                        f'涉及手牌: {", ".join(filter(None, r["wristband_nos"]))}',
+                phone=r['phone'],
+                related_data={
+                    'loss_count': r['loss_count'],
+                    'days': days_threshold,
+                    'wristband_nos': r['wristband_nos']
+                }
+            )
+
+
+def check_continuous_reissue_in_area():
+    from datetime import timedelta
+    hours_threshold = 24
+    count_threshold = 3
+    since = datetime.now() - timedelta(hours=hours_threshold)
+    result = query('''
+        SELECT ir.bath_area_id, ba.name as bath_area_name,
+               COUNT(DISTINCT ra.id) as reissue_count,
+               ARRAY_AGG(DISTINCT w.wristband_no) as wristband_nos
+        FROM reissue_applications ra
+        LEFT JOIN issue_records ir ON ra.issue_record_id = ir.id
+        LEFT JOIN bath_areas ba ON ir.bath_area_id = ba.id
+        LEFT JOIN wristbands w ON ra.new_wristband_id = w.id
+        WHERE ra.review_status = 'approved' AND ra.review_time >= %s
+        GROUP BY ir.bath_area_id, ba.name
+        HAVING COUNT(DISTINCT ra.id) >= %s
+    ''', (since, count_threshold))
+    for r in result:
+        if not r['bath_area_id']:
+            continue
+        existing = query_one('''
+            SELECT id FROM warnings
+            WHERE warning_type = 'continuous_reissue' AND bath_area_id = %s AND is_resolved = FALSE
+              AND created_at >= %s
+        ''', (r['bath_area_id'], since))
+        if not existing:
+            create_warning(
+                warning_type='continuous_reissue',
+                warning_level='medium',
+                title=f'浴区[{r["bath_area_name"]}]连续出现补办',
+                content=f'浴区 {r["bath_area_name"]} 在 {hours_threshold} 小时内补办 {r["reissue_count"]} 次, '
+                        f'新手牌: {", ".join(filter(None, r["wristband_nos"]))}',
+                bath_area_id=r['bath_area_id'],
+                related_data={
+                    'reissue_count': r['reissue_count'],
+                    'hours': hours_threshold,
+                    'bath_area_name': r['bath_area_name']
+                }
+            )
+
+
+def check_frozen_misuse(wristband_id, action, operator_id):
+    band = query_one("SELECT * FROM wristbands WHERE id = %s", (wristband_id,))
+    if band and band['current_status'] == 'frozen':
+        user = query_one("SELECT full_name FROM users WHERE id = %s", (operator_id,))
+        create_warning(
+            warning_type='frozen_misuse',
+            warning_level='high',
+            title=f'冻结手牌[{band["wristband_no"]}]被误操作',
+            content=f'冻结手牌 {band["wristband_no"]} 被操作员 {user["full_name"] if user else "未知"} '
+                    f'尝试执行操作: {action}, 请及时核查',
+            wristband_id=wristband_id,
+            related_data={
+                'action': action,
+                'operator_id': operator_id,
+                'operator_name': user['full_name'] if user else None
+            }
+        )
+
+
+def run_all_warning_checks():
+    try:
+        check_long_unreturned()
+    except Exception:
+        pass
+    try:
+        check_frequent_loss()
+    except Exception:
+        pass
+    try:
+        check_continuous_reissue_in_area()
+    except Exception:
+        pass
+
+
+def get_unread_warning_stats():
+    stats = {
+        'total_unread': 0,
+        'high_count': 0,
+        'medium_count': 0,
+        'normal_count': 0,
+        'unresolved_count': 0
+    }
+    try:
+        total = query_one("SELECT COUNT(*) as cnt FROM warnings WHERE is_read = FALSE")
+        stats['total_unread'] = int(total['cnt']) if total else 0
+        high = query_one("SELECT COUNT(*) as cnt FROM warnings WHERE is_read = FALSE AND warning_level = 'high'")
+        stats['high_count'] = int(high['cnt']) if high else 0
+        medium = query_one("SELECT COUNT(*) as cnt FROM warnings WHERE is_read = FALSE AND warning_level = 'medium'")
+        stats['medium_count'] = int(medium['cnt']) if medium else 0
+        normal = query_one("SELECT COUNT(*) as cnt FROM warnings WHERE is_read = FALSE AND warning_level = 'normal'")
+        stats['normal_count'] = int(normal['cnt']) if normal else 0
+        unresolved = query_one("SELECT COUNT(*) as cnt FROM warnings WHERE is_resolved = FALSE")
+        stats['unresolved_count'] = int(unresolved['cnt']) if unresolved else 0
+    except Exception:
+        pass
+    return stats
+
+
 def dict_to_json(data):
     if data is None:
         return None
@@ -164,6 +364,7 @@ def logout():
 @require_login
 def index():
     user = get_session_user()
+    run_all_warning_checks()
     def safe_count(sql, *params):
         try:
             r = query_one(sql, params)
@@ -177,7 +378,29 @@ def index():
         'unsettled': safe_count("SELECT COUNT(*) as cnt FROM issue_records WHERE fee_status = 'unsettled' AND return_time IS NULL"),
         'pending_review': safe_count("SELECT COUNT(*) as cnt FROM reissue_applications WHERE review_status = 'pending'"),
     }
-    return template('templates/index.html', user=user, stats=stats)
+    warning_stats = get_unread_warning_stats()
+    recent_warnings = []
+    try:
+        rows = query('''
+            SELECT w.*, u1.full_name as read_by_name, u2.full_name as resolved_by_name,
+                   wr.wristband_no, ba.name as bath_area_name
+            FROM warnings w
+            LEFT JOIN users u1 ON w.read_by = u1.id
+            LEFT JOIN users u2 ON w.resolved_by = u2.id
+            LEFT JOIN wristbands wr ON w.wristband_id = wr.id
+            LEFT JOIN bath_areas ba ON w.bath_area_id = ba.id
+            ORDER BY w.created_at DESC LIMIT 20
+        ''')
+        recent_warnings = [dict(r) for r in rows]
+    except Exception:
+        pass
+    return template(
+        'templates/index.html',
+        user=user,
+        stats=stats,
+        warning_stats_json=to_template_json(warning_stats),
+        recent_warnings_json=to_template_json(recent_warnings)
+    )
 
 
 @app.route('/bath-areas')
@@ -374,6 +597,19 @@ def api_issue_band():
         (issue_time, wristband_id)
     )
 
+    new_record = query_one("SELECT id FROM issue_records WHERE serial_no = %s", (serial_no,))
+    log_status_change(
+        wristband_id=wristband_id,
+        old_status=band['current_status'],
+        new_status='issued',
+        change_reason='入场发牌',
+        issue_record_id=new_record['id'] if new_record else None,
+        operator_id=user['id'],
+        phone=phone,
+        customer_name=data.get('customer_name', ''),
+        change_time=issue_time
+    )
+
     shift = get_active_shift(user['id'])
     if shift:
         execute("UPDATE shift_records SET issue_count = issue_count + 1 WHERE id = %s", (shift['id'],))
@@ -420,6 +656,7 @@ def api_return_band(record_id):
 
     band = query_one("SELECT * FROM wristbands WHERE id = %s", (record['wristband_id'],))
     if band and band['current_status'] == 'frozen':
+        check_frozen_misuse(record['wristband_id'], '退牌结算', user['id'])
         return json_response(None, False, '该手牌已冻结，无法退回流转')
 
     return_time = datetime.now()
@@ -433,6 +670,8 @@ def api_return_band(record_id):
 
     total_fee = (record['base_fee'] or 0) + extra_fee + loss_fee + reissue_fee
 
+    old_band_status = band['current_status'] if band else None
+
     execute('''
         UPDATE issue_records SET return_time=%s, extra_fee=%s, loss_fee=%s, reissue_fee=%s, fee_status='settled'
         WHERE id=%s
@@ -442,6 +681,18 @@ def api_return_band(record_id):
         execute(
             "UPDATE wristbands SET current_status = 'available', deposit_status = %s WHERE id = %s",
             (deposit_status, band['id'])
+        )
+        log_status_change(
+            wristband_id=band['id'],
+            old_status=old_band_status,
+            new_status='available',
+            change_reason='退牌结算',
+            issue_record_id=record_id,
+            operator_id=user['id'],
+            phone=record['phone'],
+            customer_name=record['customer_name'],
+            remark=f'总费用: {total_fee}元, 押金状态: {deposit_status}',
+            change_time=return_time
         )
 
     shift = get_active_shift(user['id'])
@@ -490,22 +741,43 @@ def api_report_loss():
     if record['lost_status'] != 'normal':
         return json_response(None, False, '该记录已申报遗失')
 
+    loss_time = datetime.now()
+
     execute(
         "UPDATE issue_records SET lost_status = 'lost' WHERE id = %s",
         (record_id,)
     )
 
     if record['wristband_id']:
+        band = query_one("SELECT * FROM wristbands WHERE id = %s", (record['wristband_id'],))
+        old_status = band['current_status'] if band else None
         execute(
             "UPDATE wristbands SET current_status = 'frozen' WHERE id = %s",
             (record['wristband_id'],)
+        )
+        log_status_change(
+            wristband_id=record['wristband_id'],
+            old_status=old_status,
+            new_status='frozen',
+            change_reason='遗失申报冻结',
+            issue_record_id=record_id,
+            operator_id=user['id'],
+            phone=record['phone'],
+            customer_name=record['customer_name'],
+            remark=data.get('loss_description', ''),
+            change_time=loss_time
         )
 
     execute('''
         INSERT INTO reissue_applications 
         (issue_record_id, report_time, reported_by, loss_description)
         VALUES (%s, %s, %s, %s)
-    ''', (record_id, datetime.now(), user['full_name'], data.get('loss_description', '')))
+    ''', (record_id, loss_time, user['full_name'], data.get('loss_description', '')))
+
+    try:
+        check_frequent_loss()
+    except Exception:
+        pass
 
     return json_response(None, True, '遗失申报成功，原手牌已冻结')
 
@@ -549,12 +821,34 @@ def api_review_reissue(app_id):
     loss_fee = float(data.get('loss_fee', 0) or 0)
     reissue_fee = float(data.get('reissue_fee', 0) or 0)
     new_wristband_id = data.get('new_wristband_id')
+    review_time = datetime.now()
 
     if decision == 'reject':
         execute('''
             UPDATE reissue_applications SET review_status='rejected', review_time=%s, reviewer_id=%s, review_comment=%s
             WHERE id=%s
-        ''', (datetime.now(), user['id'], data.get('review_comment', ''), app_id))
+        ''', (review_time, user['id'], data.get('review_comment', ''), app_id))
+        record = query_one("SELECT * FROM issue_records WHERE id = %s", (app['issue_record_id'],))
+        if record and record['wristband_id']:
+            band = query_one("SELECT * FROM wristbands WHERE id = %s", (record['wristband_id'],))
+            old_status = band['current_status'] if band else None
+            execute(
+                "UPDATE wristbands SET current_status = 'issued' WHERE id = %s AND current_status = 'frozen'",
+                (record['wristband_id'],)
+            )
+            if band and band['current_status'] == 'frozen':
+                log_status_change(
+                    wristband_id=record['wristband_id'],
+                    old_status='frozen',
+                    new_status='issued',
+                    change_reason='补办审核驳回，解除冻结',
+                    issue_record_id=record['id'],
+                    operator_id=user['id'],
+                    phone=record['phone'],
+                    customer_name=record['customer_name'],
+                    remark=data.get('review_comment', ''),
+                    change_time=review_time
+                )
         return json_response(None, True, '审核驳回成功')
 
     record = query_one("SELECT * FROM issue_records WHERE id = %s", (app['issue_record_id'],))
@@ -565,7 +859,7 @@ def api_review_reissue(app_id):
         SET review_status='approved', review_time=%s, reviewer_id=%s, review_comment=%s,
             is_responsible=%s, new_wristband_id=%s
         WHERE id=%s
-    ''', (datetime.now(), user['id'], data.get('review_comment', ''), is_responsible, new_wristband_id, app_id))
+    ''', (review_time, user['id'], data.get('review_comment', ''), is_responsible, new_wristband_id, app_id))
 
     execute('''
         UPDATE issue_records SET loss_fee=%s, reissue_fee=%s WHERE id=%s
@@ -579,14 +873,43 @@ def api_review_reissue(app_id):
                     "UPDATE wristbands SET current_status = 'replaced' WHERE id = %s",
                     (old_wristband_id,)
                 )
+                log_status_change(
+                    wristband_id=old_wristband_id,
+                    old_status='frozen',
+                    new_status='replaced',
+                    change_reason='补办替换，旧手牌作废',
+                    issue_record_id=app['issue_record_id'],
+                    operator_id=user['id'],
+                    phone=record['phone'] if record else None,
+                    customer_name=record['customer_name'] if record else None,
+                    remark=f'补办新手牌ID: {new_wristband_id}, 赔偿费: {loss_fee}元, 补办费: {reissue_fee}元',
+                    change_time=review_time
+                )
             execute(
                 "UPDATE wristbands SET current_status = 'issued', last_issued_at = %s WHERE id = %s",
-                (datetime.now(), new_wristband_id)
+                (review_time, new_wristband_id)
+            )
+            log_status_change(
+                wristband_id=new_wristband_id,
+                old_status='available',
+                new_status='issued',
+                change_reason='补办发牌',
+                issue_record_id=app['issue_record_id'],
+                operator_id=user['id'],
+                phone=record['phone'] if record else None,
+                customer_name=record['customer_name'] if record else None,
+                remark=f'补办替换, 赔偿费: {loss_fee}元, 补办费: {reissue_fee}元',
+                change_time=review_time
             )
             execute(
                 "UPDATE issue_records SET wristband_id = %s WHERE id = %s",
                 (new_wristband_id, app['issue_record_id'])
             )
+
+    try:
+        check_continuous_reissue_in_area()
+    except Exception:
+        pass
 
     shift = get_active_shift(user['id'])
     if shift:
@@ -599,9 +922,12 @@ def api_review_reissue(app_id):
 @require_login
 def shift_summary_page():
     user = get_session_user()
+    run_all_warning_checks()
     shift = get_active_shift(user['id'])
     if not shift:
-        return template('templates/shift_summary.html', user=user, shift_json='null', records_json='[]', summary_json='null')
+        return template('templates/shift_summary.html', user=user, shift_json='null', records_json='[]', summary_json='null',
+                        warning_stats_json=to_template_json({'total_unread':0,'high_count':0,'medium_count':0,'normal_count':0,'unresolved_count':0}),
+                        shift_warnings_json='[]')
 
     records = query('''
         SELECT ir.*, w.wristband_no, ba.name as bath_area_name,
@@ -624,7 +950,28 @@ def shift_summary_page():
         'total_income': sum(float(r['base_fee'] or 0) + float(r['extra_fee'] or 0) + float(r['loss_fee'] or 0) + float(r['reissue_fee'] or 0) for r in records if r['fee_status'] == 'settled')
     }
 
-    return template('templates/shift_summary.html', user=user, shift_json=to_template_json(shift), records_json=to_template_json(records), summary_json=to_template_json(summary_data))
+    warning_stats = get_unread_warning_stats()
+    shift_warnings = []
+    try:
+        record_ids = [r['id'] for r in records]
+        if record_ids:
+            placeholders = ','.join(['%s'] * len(record_ids))
+            rows = query(f'''
+                SELECT w.*, wr.wristband_no, ba.name as bath_area_name
+                FROM warnings w
+                LEFT JOIN wristbands wr ON w.wristband_id = wr.id
+                LEFT JOIN bath_areas ba ON w.bath_area_id = ba.id
+                WHERE w.issue_record_id IN ({placeholders}) OR w.created_at >= %s
+                ORDER BY w.created_at DESC
+            ''', record_ids + [shift['start_time']])
+            shift_warnings = [dict(r) for r in rows]
+    except Exception:
+        pass
+
+    return template('templates/shift_summary.html', user=user, shift_json=to_template_json(shift),
+                    records_json=to_template_json(records), summary_json=to_template_json(summary_data),
+                    warning_stats_json=to_template_json(warning_stats),
+                    shift_warnings_json=to_template_json(shift_warnings))
 
 
 @app.route('/api/shift/close', method='POST')
@@ -655,6 +1002,167 @@ def api_close_shift():
     )
 
     return json_response(None, True, '交接完成，新班次已开始')
+
+
+@app.route('/wristband-tracking')
+@require_login
+def wristband_tracking_page():
+    user = get_session_user()
+    areas = query('SELECT * FROM bath_areas WHERE is_active = TRUE ORDER BY id')
+    return template('templates/wristband_tracking.html', user=user, areas_json=to_template_json(areas))
+
+
+@app.route('/warnings')
+@require_login
+def warnings_page():
+    user = get_session_user()
+    return template('templates/warnings.html', user=user)
+
+
+@app.route('/api/warnings/stats', method='GET')
+@require_login
+def api_warnings_stats():
+    run_all_warning_checks()
+    stats = get_unread_warning_stats()
+    return json_response(stats)
+
+
+@app.route('/api/warnings', method='GET')
+@require_login
+def api_warnings_list():
+    warning_type = request.query.get('type', '')
+    level = request.query.get('level', '')
+    is_read = request.query.get('is_read', '')
+    is_resolved = request.query.get('is_resolved', '')
+    limit = request.query.get('limit', '100')
+
+    sql = '''
+        SELECT w.*, u1.full_name as read_by_name, u2.full_name as resolved_by_name,
+               wr.wristband_no, ba.name as bath_area_name
+        FROM warnings w
+        LEFT JOIN users u1 ON w.read_by = u1.id
+        LEFT JOIN users u2 ON w.resolved_by = u2.id
+        LEFT JOIN wristbands wr ON w.wristband_id = wr.id
+        LEFT JOIN bath_areas ba ON w.bath_area_id = ba.id
+        WHERE 1=1
+    '''
+    params = []
+    if warning_type:
+        sql += " AND w.warning_type = %s"
+        params.append(warning_type)
+    if level:
+        sql += " AND w.warning_level = %s"
+        params.append(level)
+    if is_read:
+        sql += " AND w.is_read = %s"
+        params.append(is_read == 'true')
+    if is_resolved:
+        sql += " AND w.is_resolved = %s"
+        params.append(is_resolved == 'true')
+    sql += " ORDER BY w.created_at DESC LIMIT %s"
+    try:
+        params.append(int(limit))
+    except ValueError:
+        params.append(100)
+    rows = query(sql, params)
+    return json_response([dict(r) for r in rows])
+
+
+@app.route('/api/warnings/refresh', method='POST')
+@require_login
+def api_warnings_refresh():
+    run_all_warning_checks()
+    return json_response({'status': 'ok'}, True, '预警检测完成')
+
+
+@app.route('/api/warnings/<warning_id:int>/read', method='POST')
+@require_login
+def api_warning_mark_read(warning_id):
+    user = get_session_user()
+    execute('''
+        UPDATE warnings SET is_read = TRUE, read_by = %s, read_time = %s
+        WHERE id = %s AND is_read = FALSE
+    ''', (user['id'], datetime.now(), warning_id))
+    return json_response(None, True, '已标记为已读')
+
+
+@app.route('/api/warnings/read-all', method='POST')
+@require_login
+def api_warning_read_all():
+    user = get_session_user()
+    execute('''
+        UPDATE warnings SET is_read = TRUE, read_by = %s, read_time = %s
+        WHERE is_read = FALSE
+    ''', (user['id'], datetime.now()))
+    return json_response(None, True, '已全部标记为已读')
+
+
+@app.route('/api/warnings/<warning_id:int>/resolve', method='POST')
+@require_login
+def api_warning_resolve(warning_id):
+    user = get_session_user()
+    data = request.json or {}
+    execute('''
+        UPDATE warnings SET is_resolved = TRUE, resolved_by = %s,
+               resolved_time = %s, resolve_note = %s
+        WHERE id = %s AND is_resolved = FALSE
+    ''', (user['id'], datetime.now(), data.get('resolve_note', ''), warning_id))
+    return json_response(None, True, '已标记为已解决')
+
+
+@app.route('/api/warnings/<warning_id:int>', method='DELETE')
+@require_login
+def api_warning_delete(warning_id):
+    execute("DELETE FROM warnings WHERE id = %s", (warning_id,))
+    return json_response(None, True, '删除成功')
+
+
+@app.route('/api/wristbands/<band_id:int>/status-log', method='GET')
+@require_login
+def api_wristband_status_log(band_id):
+    rows = query('''
+        SELECT l.*, u.full_name as operator_name, w.wristband_no
+        FROM wristband_status_logs l
+        LEFT JOIN users u ON l.operator_id = u.id
+        LEFT JOIN wristbands w ON l.wristband_id = w.id
+        WHERE l.wristband_id = %s
+        ORDER BY l.change_time DESC
+    ''', (band_id,))
+    band = query_one("SELECT * FROM wristbands WHERE id = %s", (band_id,))
+    return json_response({
+        'wristband': dict(band) if band else None,
+        'logs': [dict(r) for r in rows]
+    })
+
+
+@app.route('/api/issue-records/<record_id:int>/status-log', method='GET')
+@require_login
+def api_issue_record_status_log(record_id):
+    rows = query('''
+        SELECT l.*, u.full_name as operator_name, w.wristband_no
+        FROM wristband_status_logs l
+        LEFT JOIN users u ON l.operator_id = u.id
+        LEFT JOIN wristbands w ON l.wristband_id = w.id
+        WHERE l.issue_record_id = %s
+        ORDER BY l.change_time ASC
+    ''', (record_id,))
+    return json_response([dict(r) for r in rows])
+
+
+@app.route('/api/warnings/types', method='GET')
+@require_login
+def api_warning_types():
+    types = [
+        {'type': 'long_unreturned', 'name': '长时间未退', 'default_level': 'high',
+         'description': '手牌发放超过12小时未退回'},
+        {'type': 'frequent_loss', 'name': '频繁遗失', 'default_level': 'high',
+         'description': '同一手机号30天内遗失2次以上'},
+        {'type': 'continuous_reissue', 'name': '连续补办', 'default_level': 'medium',
+         'description': '同一浴区24小时内补办3次以上'},
+        {'type': 'frozen_misuse', 'name': '冻结误操作', 'default_level': 'high',
+         'description': '被冻结的手牌被尝试进行操作'},
+    ]
+    return json_response(types)
 
 
 if __name__ == '__main__':

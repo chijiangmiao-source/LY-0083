@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>手牌全生命周期追踪 - 澡堂手牌管理系统</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.0/dist/cdn.min.js"></script>
+    <style>
+        body { background-color: #f5f5f5; min-height: 100vh; }
+        .navbar-brand-title { font-weight: 700; font-size: 1.2rem; }
+        .tag-available { background-color: #48c78e !important; }
+        .tag-issued { background-color: #3298dc !important; }
+        .tag-frozen { background-color: #f14668 !important; }
+        .tag-replaced { background-color: #7b61ff !important; }
+        .timeline { position: relative; padding-left: 30px; }
+        .timeline::before { content: ''; position: absolute; left: 10px; top: 5px; bottom: 5px; width: 2px; background: #dbdbdb; }
+        .timeline-item { position: relative; padding-bottom: 20px; }
+        .timeline-item::before { content: ''; position: absolute; left: -24px; top: 5px; width: 12px; height: 12px; border-radius: 50%; background: #3298dc; border: 2px solid #fff; box-shadow: 0 0 0 2px #dbdbdb; }
+        .timeline-item.is-success::before { background: #48c78e; }
+        .timeline-item.is-danger::before { background: #f14668; }
+        .timeline-item.is-warning::before { background: #ff9f43; }
+        .timeline-item.is-info::before { background: #3298dc; }
+        .timeline-item.is-purple::before { background: #7b61ff; }
+        .card-table { overflow-x: auto; }
+    </style>
+</head>
+<body x-data="trackingApp()">
+<nav class="navbar is-primary" role="navigation">
+    <div class="navbar-brand">
+        <a class="navbar-item navbar-brand-title" href="/">🛁 澡堂手牌管理系统</a>
+    </div>
+    <div class="navbar-menu">
+        <div class="navbar-start">
+            <a class="navbar-item" href="/">首页</a>
+            <a class="navbar-item" href="/bath-areas">浴区管理</a>
+            <a class="navbar-item" href="/wristbands">手牌配置</a>
+            <a class="navbar-item" href="/issue">入场发牌</a>
+            <a class="navbar-item" href="/return">退牌结算</a>
+            <a class="navbar-item" href="/report-loss">遗失申报</a>
+            <a class="navbar-item" href="/reissue-review">补办审核</a>
+            <a class="navbar-item is-active" href="/wristband-tracking">手牌追踪</a>
+            <a class="navbar-item" href="/warnings">预警中心</a>
+            <a class="navbar-item" href="/shift-summary">交接汇总</a>
+        </div>
+        <div class="navbar-end">
+            <div class="navbar-item">
+                <span class="mr-3">欢迎，{{user['full_name']}}</span>
+                <a class="button is-light" href="/logout">退出登录</a>
+            </div>
+        </div>
+    </div>
+</nav>
+<section class="section">
+    <div class="container">
+        <h1 class="title">手牌全生命周期追踪</h1>
+
+        <div class="box">
+            <div class="columns">
+                <div class="column is-4">
+                    <label class="label">浴区筛选</label>
+                    <div class="select is-fullwidth">
+                        <select x-model="filterAreaId" @change="loadBands()">
+                            <option value="">全部浴区</option>
+                            <template x-for="area in areas" :key="area.id">
+                                <option :value="area.id" x-text="area.name"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+                <div class="column is-4">
+                    <label class="label">状态筛选</label>
+                    <div class="select is-fullwidth">
+                        <select x-model="filterStatus" @change="loadBands()">
+                            <option value="">全部状态</option>
+                            <option value="available">可用</option>
+                            <option value="issued">已发放</option>
+                            <option value="frozen">已冻结</option>
+                            <option value="replaced">已替换</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="column is-4">
+                    <label class="label">手牌编号搜索</label>
+                    <input class="input" type="text" x-model="searchKeyword" @input="loadBands()" placeholder="输入手牌编号...">
+                </div>
+            </div>
+        </div>
+
+        <div class="columns">
+            <div class="column is-5">
+                <div class="box">
+                    <h2 class="subtitle">手牌列表 <span class="tag is-info ml-2" x-text="'共 ' + bands.length + ' 条'"></span></h2>
+                    <div class="card-table">
+                        <table class="table is-fullwidth is-striped is-hoverable">
+                            <thead>
+                                <tr>
+                                    <th>手牌编号</th>
+                                    <th>浴区</th>
+                                    <th>当前状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="band in filteredBands()" :key="band.id">
+                                    <tr :class="{'is-selected': selectedBand && selectedBand.id == band.id}" @click="selectBand(band)">
+                                        <td x-text="band.wristband_no" class="has-text-weight-semibold"></td>
+                                        <td x-text="band.bath_area_name || '-'"></td>
+                                        <td>
+                                            <span class="tag" :class="'tag-' + band.current_status" x-text="statusText(band.current_status)"></span>
+                                        </td>
+                                        <td>
+                                            <button class="button is-small is-info" @click.stop="loadTimeline(band.id)">查看时间线</button>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                        <div x-show="bands.length == 0" class="has-text-centered has-text-grey py-4">暂无手牌数据</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="column is-7">
+                <div class="box">
+                    <div class="columns is-mobile is-vcentered">
+                        <div class="column">
+                            <h2 class="subtitle mb-0">状态变更时间线</h2>
+                        </div>
+                        <div class="column is-narrow">
+                            <button class="button is-small is-primary" x-show="selectedBand" @click="loadTimeline(selectedBand.id)">
+                                <span>刷新</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div x-show="!selectedBand" class="has-text-centered has-text-grey py-6">
+                        <p class="is-size-5 mb-2">← 请从左侧选择一个手牌</p>
+                        <p class="is-size-7">查看手牌完整的状态变更历史</p>
+                    </div>
+
+                    <div x-show="selectedBand">
+                        <div class="notification is-light mb-4">
+                            <div class="columns is-multiline is-mobile">
+                                <div class="column is-6">
+                                    <span class="has-text-grey">手牌编号：</span>
+                                    <span class="has-text-weight-semibold" x-text="selectedBand.wristband_no"></span>
+                                </div>
+                                <div class="column is-6">
+                                    <span class="has-text-grey">浴区：</span>
+                                    <span class="has-text-weight-semibold" x-text="selectedBand.bath_area_name || '-'"></span>
+                                </div>
+                                <div class="column is-6">
+                                    <span class="has-text-grey">当前状态：</span>
+                                    <span class="tag" :class="'tag-' + selectedBand.current_status" x-text="statusText(selectedBand.current_status)"></span>
+                                </div>
+                                <div class="column is-6">
+                                    <span class="has-text-grey">记录数：</span>
+                                    <span class="has-text-weight-semibold" x-text="timeline.length + ' 次变更'"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="timeline" x-show="timeline.length > 0">
+                            <template x-for="(log, idx) in timeline" :key="log.id">
+                                <div class="timeline-item" :class="timelineClass(log.new_status)">
+                                    <div class="mb-1">
+                                        <span class="tag is-small mr-2" :class="'tag-' + (log.new_status == 'replaced' ? 'replaced' : log.new_status)" x-text="statusText(log.new_status)"></span>
+                                        <span class="has-text-weight-semibold" x-text="log.change_reason"></span>
+                                    </div>
+                                    <div class="is-size-7 has-text-grey mb-1" x-text="formatTime(log.change_time)"></div>
+                                    <div class="is-size-7 mb-1">
+                                        <span class="has-text-grey">操作员：</span>
+                                        <span x-text="log.operator_name || '系统'"></span>
+                                        <span class="mx-2">|</span>
+                                        <span class="has-text-grey">变更前：</span>
+                                        <span x-text="statusText(log.old_status) || '无'"></span>
+                                    </div>
+                                    <div class="is-size-7 mb-1" x-show="log.customer_name || log.phone">
+                                        <span class="has-text-grey">客户：</span>
+                                        <span x-text="log.customer_name"></span>
+                                        <span x-show="log.phone" x-text="'(' + log.phone + ')'"></span>
+                                    </div>
+                                    <div class="is-size-7 has-text-grey-dark" x-show="log.remark" x-text="'备注：' + log.remark"></div>
+                                </div>
+                            </template>
+                        </div>
+
+                        <div x-show="timeline.length == 0 && selectedBand" class="has-text-centered has-text-grey py-4">
+                            该手牌暂无状态变更记录
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<script>
+function trackingApp() {
+    return {
+        areas: !{areas_json || '[]'},
+        bands: [],
+        filterAreaId: '',
+        filterStatus: '',
+        searchKeyword: '',
+        selectedBand: null,
+        timeline: [],
+        init() {
+            this.loadBands();
+        },
+        async loadBands() {
+            let url = '/api/wristbands?';
+            if (this.filterStatus) url += '&status=' + this.filterStatus;
+            if (this.filterAreaId) url += '&area_id=' + this.filterAreaId;
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                if (data.success) this.bands = data.data || [];
+            } catch(e) { console.error(e); }
+        },
+        filteredBands() {
+            if (!this.searchKeyword) return this.bands;
+            const kw = this.searchKeyword.toLowerCase();
+            return this.bands.filter(b => (b.wristband_no || '').toLowerCase().includes(kw));
+        },
+        selectBand(band) {
+            this.selectedBand = band;
+            this.loadTimeline(band.id);
+        },
+        async loadTimeline(bandId) {
+            try {
+                const res = await fetch('/api/wristbands/' + bandId + '/status-log');
+                const data = await res.json();
+                if (data.success) {
+                    this.timeline = data.data.logs || [];
+                    if (data.data.wristband) this.selectedBand = data.data.wristband;
+                }
+            } catch(e) { console.error(e); }
+        },
+        statusText(s) {
+            const m = {'available':'可用','issued':'已发放','frozen':'已冻结','replaced':'已替换'};
+            return m[s] || s || '-';
+        },
+        timelineClass(s) {
+            const m = {'available':'is-success','issued':'is-info','frozen':'is-danger','replaced':'is-purple'};
+            return m[s] || 'is-info';
+        },
+        formatTime(t) {
+            if (!t) return '';
+            const d = new Date(t);
+            return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+                + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0')
+                + ':' + String(d.getSeconds()).padStart(2,'0');
+        }
+    }
+}
+</script>
+</body>
+</html>

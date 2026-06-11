@@ -13,11 +13,29 @@
         .tag-available { background-color: #48c78e !important; }
         .tag-issued { background-color: #3298dc !important; }
         .tag-frozen { background-color: #f14668 !important; }
+        .tag-replaced { background-color: #7b61ff !important; }
         .tag-pending { background-color: #ffdd57 !important; color: #333; }
         .tag-settled { background-color: #48c78e !important; }
         .tag-unsettled { background-color: #ff9f43 !important; }
         .tag-lost { background-color: #f14668 !important; }
         .tag-normal { background-color: #48c78e !important; }
+        .tag-level-high { background-color: #f14668 !important; color: #fff !important; }
+        .tag-level-medium { background-color: #ff9f43 !important; color: #fff !important; }
+        .tag-level-normal { background-color: #3298dc !important; color: #fff !important; }
+        .timeline { position: relative; padding-left: 30px; }
+        .timeline::before { content: ''; position: absolute; left: 10px; top: 5px; bottom: 5px; width: 2px; background: #dbdbdb; }
+        .timeline-item { position: relative; padding-bottom: 20px; }
+        .timeline-item::before { content: ''; position: absolute; left: -24px; top: 5px; width: 12px; height: 12px; border-radius: 50%; background: #3298dc; border: 2px solid #fff; box-shadow: 0 0 0 2px #dbdbdb; }
+        .timeline-item.is-success::before { background: #48c78e; }
+        .timeline-item.is-danger::before { background: #f14668; }
+        .timeline-item.is-warning::before { background: #ff9f43; }
+        .timeline-item.is-info::before { background: #3298dc; }
+        .timeline-item.is-purple::before { background: #7b61ff; }
+        .warning-badge { display: inline-block; min-width: 22px; padding: 0 6px; line-height: 22px; text-align: center; border-radius: 11px; background: #f14668; color: #fff; font-size: 12px; font-weight: bold; margin-left: 4px; }
+        .warning-card { border-left: 4px solid #f14668 !important; }
+        .warning-card.is-medium { border-left-color: #ff9f43 !important; }
+        .warning-card.is-normal { border-left-color: #3298dc !important; }
+        .scroll-warning-list { max-height: 400px; overflow-y: auto; }
     </style>
 </head>
 <body>
@@ -38,6 +56,8 @@
             <a class="navbar-item" href="/return">退牌结算</a>
             <a class="navbar-item" href="/report-loss">遗失申报</a>
             <a class="navbar-item" href="/reissue-review">补办审核</a>
+            <a class="navbar-item" href="/wristband-tracking">手牌追踪</a>
+            <a class="navbar-item" href="/warnings">预警中心</a>
             <a class="navbar-item" href="/shift-summary">交接汇总</a>
         </div>
         <div class="navbar-end">
