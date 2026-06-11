@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>退牌结算</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.0/dist/cdn.min.js"></script>
+    <style>
+        .tag-lost { background-color: #f14668 !important; }
+        .tag-normal { background-color: #48c78e !important; }
+    </style>
+</head>
+<body style="background-color: #f5f5f5; min-height: 100vh;" x-data="returnApp()">
+<nav class="navbar is-primary" role="navigation">
+    <div class="navbar-brand">
+        <a class="navbar-item" style="font-weight:700;font-size:1.2rem;" href="/">🛁 澡堂手牌管理系统</a>
+    </div>
+    <div class="navbar-menu">
+        <div class="navbar-start">
+            <a class="navbar-item" href="/">首页</a>
+            <a class="navbar-item" href="/bath-areas">浴区管理</a>
+            <a class="navbar-item" href="/wristbands">手牌配置</a>
+            <a class="navbar-item" href="/issue">入场发牌</a>
+            <a class="navbar-item is-active" href="/return">退牌结算</a>
+            <a class="navbar-item" href="/report-loss">遗失申报</a>
+            <a class="navbar-item" href="/reissue-review">补办审核</a>
+            <a class="navbar-item" href="/shift-summary">交接汇总</a>
+        </div>
+        <div class="navbar-end">
+            <div class="navbar-item">
+                <span class="mr-3">欢迎，{{user['full_name']}}</span>
+                <a class="button is-light" href="/logout">退出登录</a>
+            </div>
+        </div>
+    </div>
+</nav>
+<section class="section">
+    <div class="container">
+        <h1 class="title">退牌结算</h1>
+        <div class="box">
+            <div class="field has-addons">
+                <div class="control is-expanded">
+                    <input class="input is-medium" type="text" x-model="keyword" @keyup.enter="search()" placeholder="输入流水号 / 手牌编号 / 手机号 / 姓名搜索">
+                </div>
+                <div class="control">
+                    <button class="button is-primary is-medium" @click="search()">搜索</button>
+                </div>
+            </div>
+        </div>
+        <div class="box" style="overflow-x:auto;">
+            <table class="table is-fullwidth is-striped">
+                <thead>
+                    <tr><th>流水号</th><th>手牌</th><th>顾客</th><th>电话</th><th>浴区</th><th>发牌时间</th><th>基础费</th><th>遗失状态</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="r in records" :key="r.id">
+                        <tr>
+                            <td><small x-text="r.serial_no"></small></td>
+                            <td><strong x-text="r.wristband_no"></strong></td>
+                            <td x-text="r.customer_name"></td>
+                            <td x-text="r.phone"></td>
+                            <td x-text="r.bath_area_name"></td>
+                            <td><small x-text="r.issue_time"></small></td>
+                            <td>¥ <span x-text="parseFloat(r.base_fee).toFixed(2)"></span></td>
+                            <td>
+                                <span class="tag" :class="'tag-' + r.lost_status" x-text="{normal:'正常', lost:'已遗失'}[r.lost_status]"></span>
+                            </td>
+                            <td><button class="button is-small is-success" @click="showSettle(r)">结算退牌</button></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <p x-show="records.length == 0" class="has-text-grey">暂无未退牌记录</p>
+        </div>
+    </div>
+</section>
+
+<div class="modal" :class="{'is-active': showModal}">
+    <div class="modal-background" @click="showModal=false"></div>
+    <div class="modal-card">
+        <header class="modal-card-head">
+            <p class="modal-card-title">退牌结算</p>
+            <button class="delete" @click="showModal=false"></button>
+        </header>
+        <section class="modal-card-body" x-show="current">
+            <div class="content">
+                <p>流水号：<strong x-text="current.serial_no"></strong></p>
+                <p>手牌：<span x-text="current.wristband_no"></span></p>
+                <p>顾客：<span x-text="current.customer_name"></span> | 电话：<span x-text="current.phone"></span></p>
+                <p>浴区：<span x-text="current.bath_area_name"></span></p>
+                <p>发牌时间：<small x-text="current.issue_time"></small></p>
+            </div>
+            <hr>
+            <div class="field">
+                <label class="label">基础费用</label>
+                <div class="control">¥ <span x-text="parseFloat(current.base_fee).toFixed(2)"></span></div>
+            </div>
+            <div class="field">
+                <label class="label">额外消费 (元)</label>
+                <div class="control"><input class="input" type="number" step="0.01" x-model="form.extra_fee" min="0" value="0"></div>
+            </div>
+            <div class="field">
+                <label class="label">遗失赔偿费 (元)</label>
+                <div class="control"><input class="input" type="number" step="0.01" x-model="form.loss_fee" min="0" value="0"></div>
+            </div>
+            <div class="field">
+                <label class="label">补办费用 (元)</label>
+                <div class="control"><input class="input" type="number" step="0.01" x-model="form.reissue_fee" min="0" value="0"></div>
+            </div>
+            <div class="field">
+                <label class="label">押金处理</label>
+                <div class="control">
+                    <label class="radio"><input type="radio" value="returned" x-model="form.deposit_status"> 退还押金</label>
+                    <label class="radio"><input type="radio" value="unpaid" x-model="form.deposit_status"> 押金未缴</label>
+                    <label class="radio"><input type="radio" value="confiscated" x-model="form.deposit_status"> 没收押金</label>
+                </div>
+            </div>
+            <div class="notification is-success">
+                <p class="is-size-4">合计应收：¥ <span x-text="totalFee()"></span></p>
+            </div>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button is-success" @click="submit()">确认结算</button>
+            <button class="button" @click="showModal=false">取消</button>
+        </footer>
+    </div>
+</div>
+
+<script>
+function returnApp() {
+    return {
+        keyword: '',
+        records: [],
+        showModal: false,
+        current: null,
+        form: { extra_fee: 0, loss_fee: 0, reissue_fee: 0, deposit_status: 'returned' },
+        async init() { await this.search(); },
+        async search() {
+            const r = await fetch('/api/return/search?keyword=' + encodeURIComponent(this.keyword));
+            const d = await r.json();
+            if (d.success) this.records = d.data || [];
+        },
+        showSettle(r) {
+            this.current = r;
+            this.form = { extra_fee: 0, loss_fee: 0, reissue_fee: 0, deposit_status: 'returned' };
+            this.showModal = true;
+        },
+        totalFee() {
+            if (!this.current) return '0.00';
+            const total = parseFloat(this.current.base_fee || 0) + parseFloat(this.form.extra_fee || 0) + parseFloat(this.form.loss_fee || 0) + parseFloat(this.form.reissue_fee || 0);
+            return total.toFixed(2);
+        },
+        async submit() {
+            const r = await fetch(`/api/return/${this.current.id}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(this.form)
+            });
+            const d = await r.json(); alert(d.message);
+            if (d.success) {
+                this.showModal = false;
+                await this.search();
+            }
+        }
+    };
+}
+</script>
+</body>
+</html>

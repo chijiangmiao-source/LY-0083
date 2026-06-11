@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>浴区管理</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.0/dist/cdn.min.js"></script>
+</head>
+<body style="background-color: #f5f5f5; min-height: 100vh;" x-data="bathAreaApp()">
+<nav class="navbar is-primary" role="navigation">
+    <div class="navbar-brand">
+        <a class="navbar-item" style="font-weight:700;font-size:1.2rem;" href="/">🛁 澡堂手牌管理系统</a>
+    </div>
+    <div class="navbar-menu">
+        <div class="navbar-start">
+            <a class="navbar-item" href="/">首页</a>
+            <a class="navbar-item is-active" href="/bath-areas">浴区管理</a>
+            <a class="navbar-item" href="/wristbands">手牌配置</a>
+            <a class="navbar-item" href="/issue">入场发牌</a>
+            <a class="navbar-item" href="/return">退牌结算</a>
+            <a class="navbar-item" href="/report-loss">遗失申报</a>
+            <a class="navbar-item" href="/reissue-review">补办审核</a>
+            <a class="navbar-item" href="/shift-summary">交接汇总</a>
+        </div>
+        <div class="navbar-end">
+            <div class="navbar-item">
+                <span class="mr-3">欢迎，{{user['full_name']}}</span>
+                <a class="button is-light" href="/logout">退出登录</a>
+            </div>
+        </div>
+    </div>
+</nav>
+<section class="section">
+    <div class="container">
+        <div class="level">
+            <div class="level-left">
+                <h1 class="title">浴区管理</h1>
+            </div>
+            <div class="level-right">
+                <button class="button is-primary" @click="showCreate()">新增浴区</button>
+            </div>
+        </div>
+        <div class="box card-table">
+            <table class="table is-fullwidth is-striped">
+                <thead>
+                    <tr><th>ID</th><th>名称</th><th>描述</th><th>基础费用</th><th>押金金额</th><th>状态</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="area in areas" :key="area.id">
+                        <tr>
+                            <td x-text="area.id"></td>
+                            <td x-text="area.name"></td>
+                            <td x-text="area.description || '-'"></td>
+                            <td>¥ <span x-text="parseFloat(area.base_price).toFixed(2)"></span></td>
+                            <td>¥ <span x-text="parseFloat(area.deposit_amount).toFixed(2)"></span></td>
+                            <td>
+                                <span class="tag" :class="area.is_active ? 'is-success' : 'is-danger'" x-text="area.is_active ? '启用' : '禁用'"></span>
+                            </td>
+                            <td>
+                                <button class="button is-small is-info" @click="showEdit(area)">编辑</button>
+                                <button class="button is-small is-danger" @click="remove(area)">删除</button>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<div class="modal" :class="{'is-active': showModal}">
+    <div class="modal-background" @click="closeModal()"></div>
+    <div class="modal-card">
+        <header class="modal-card-head">
+            <p class="modal-card-title" x-text="editing.id ? '编辑浴区' : '新增浴区'"></p>
+            <button class="delete" aria-label="close" @click="closeModal()"></button>
+        </header>
+        <section class="modal-card-body">
+            <div class="field">
+                <label class="label">名称</label>
+                <div class="control"><input class="input" type="text" x-model="editing.name" placeholder="浴区名称"></div>
+            </div>
+            <div class="field">
+                <label class="label">描述</label>
+                <div class="control"><input class="input" type="text" x-model="editing.description" placeholder="描述"></div>
+            </div>
+            <div class="field">
+                <label class="label">基础费用 (元)</label>
+                <div class="control"><input class="input" type="number" step="0.01" x-model="editing.base_price"></div>
+            </div>
+            <div class="field">
+                <label class="label">押金金额 (元)</label>
+                <div class="control"><input class="input" type="number" step="0.01" x-model="editing.deposit_amount"></div>
+            </div>
+            <div class="field" x-show="editing.id">
+                <label class="checkbox"><input type="checkbox" x-model="editing.is_active"> 启用</label>
+            </div>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button is-success" @click="save()">保存</button>
+            <button class="button" @click="closeModal()">取消</button>
+        </footer>
+    </div>
+</div>
+
+<script>
+function bathAreaApp() {
+    return {
+        areas: [],
+        showModal: false,
+        editing: {},
+        async init() { await this.load(); },
+        async load() {
+            const r = await fetch('/api/bath-areas'); const d = await r.json();
+            if (d.success) this.areas = d.data;
+        },
+        showCreate() {
+            this.editing = { name: '', description: '', base_price: 0, deposit_amount: 0, is_active: true };
+            this.showModal = true;
+        },
+        showEdit(area) { this.editing = { ...area }; this.showModal = true; },
+        closeModal() { this.showModal = false; },
+        async save() {
+            const url = this.editing.id ? `/api/bath-areas/${this.editing.id}` : '/api/bath-areas';
+            const method = this.editing.id ? 'PUT' : 'POST';
+            const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.editing) });
+            const d = await r.json();
+            alert(d.message);
+            if (d.success) { this.closeModal(); await this.load(); }
+        },
+        async remove(area) {
+            if (!confirm('确定删除该浴区？')) return;
+            const r = await fetch(`/api/bath-areas/${area.id}`, { method: 'DELETE' });
+            const d = await r.json(); alert(d.message);
+            if (d.success) await this.load();
+        }
+    };
+}
+</script>
+</body>
+</html>

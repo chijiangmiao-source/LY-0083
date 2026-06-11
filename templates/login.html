@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - 澡堂手牌管理系统</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+</head>
+<body style="background-color: #f5f5f5; min-height: 100vh; display: flex; align-items: center; justify-content: center;">
+    <div class="box" style="width: 400px;">
+        <h1 class="title has-text-centered">🛁 澡堂手牌管理系统</h1>
+        <h2 class="subtitle has-text-centered">用户登录</h2>
+        % if error:
+        <div class="notification is-danger">{{error}}</div>
+        % end
+        <form method="POST" action="/login">
+            <div class="field">
+                <label class="label">用户名</label>
+                <div class="control">
+                    <input class="input" type="text" name="username" placeholder="请输入用户名" required>
+                </div>
+            </div>
+            <div class="field">
+                <label class="label">密码</label>
+                <div class="control">
+                    <input class="input" type="password" name="password" placeholder="请输入密码" required>
+                </div>
+            </div>
+            <div class="field">
+                <div class="control">
+                    <button class="button is-primary is-fullwidth">登录</button>
+                </div>
+            </div>
+            <p class="help is-info">默认账号: admin / admin123</p>
+        </form>
+    </div>
+</body>
+</html>

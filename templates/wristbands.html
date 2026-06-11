@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>手牌配置</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.0/dist/cdn.min.js"></script>
+    <style>
+        .tag-available { background-color: #48c78e !important; }
+        .tag-issued { background-color: #3298dc !important; }
+        .tag-frozen { background-color: #f14668 !important; }
+    </style>
+</head>
+<body style="background-color: #f5f5f5; min-height: 100vh;" x-data="wristbandApp()">
+<nav class="navbar is-primary" role="navigation">
+    <div class="navbar-brand">
+        <a class="navbar-item" style="font-weight:700;font-size:1.2rem;" href="/">🛁 澡堂手牌管理系统</a>
+    </div>
+    <div class="navbar-menu">
+        <div class="navbar-start">
+            <a class="navbar-item" href="/">首页</a>
+            <a class="navbar-item" href="/bath-areas">浴区管理</a>
+            <a class="navbar-item is-active" href="/wristbands">手牌配置</a>
+            <a class="navbar-item" href="/issue">入场发牌</a>
+            <a class="navbar-item" href="/return">退牌结算</a>
+            <a class="navbar-item" href="/report-loss">遗失申报</a>
+            <a class="navbar-item" href="/reissue-review">补办审核</a>
+            <a class="navbar-item" href="/shift-summary">交接汇总</a>
+        </div>
+        <div class="navbar-end">
+            <div class="navbar-item">
+                <span class="mr-3">欢迎，{{user['full_name']}}</span>
+                <a class="button is-light" href="/logout">退出登录</a>
+            </div>
+        </div>
+    </div>
+</nav>
+<section class="section">
+    <div class="container">
+        <div class="level">
+            <div class="level-left">
+                <h1 class="title">手牌配置</h1>
+            </div>
+            <div class="level-right">
+                <button class="button is-primary" @click="showCreate()">新增手牌</button>
+            </div>
+        </div>
+        <div class="box">
+            <div class="field is-grouped">
+                <div class="control">
+                    <div class="select">
+                        <select x-model="filter.status" @change="load()">
+                            <option value="">全部状态</option>
+                            <option value="available">可用</option>
+                            <option value="issued">已发放</option>
+                            <option value="frozen">已冻结</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="control">
+                    <div class="select">
+                        <select x-model="filter.area_id" @change="load()">
+                            <option value="">全部浴区</option>
+                            <template x-for="a in areas" :key="a.id">
+                                <option :value="a.id" x-text="a.name"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="box card-table" style="overflow-x:auto;">
+            <table class="table is-fullwidth is-striped">
+                <thead>
+                    <tr><th>ID</th><th>手牌编号</th><th>所属浴区</th><th>押金状态</th><th>当前状态</th><th>最近发放时间</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="b in bands" :key="b.id">
+                        <tr>
+                            <td x-text="b.id"></td>
+                            <td><strong x-text="b.wristband_no"></strong></td>
+                            <td x-text="b.bath_area_name || '-'"></td>
+                            <td x-text="b.deposit_status == 'paid' ? '已缴' : '未缴'"></td>
+                            <td>
+                                <span class="tag" :class="'tag-' + b.current_status" x-text="{available:'可用', issued:'已发放', frozen:'已冻结'}[b.current_status]"></span>
+                            </td>
+                            <td x-text="b.last_issued_at || '-'"></td>
+                            <td>
+                                <button class="button is-small is-info" @click="showEdit(b)">编辑</button>
+                                <button class="button is-small is-danger" @click="remove(b)">删除</button>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<div class="modal" :class="{'is-active': showModal}">
+    <div class="modal-background" @click="closeModal()"></div>
+    <div class="modal-card">
+        <header class="modal-card-head">
+            <p class="modal-card-title" x-text="editing.id ? '编辑手牌' : '新增手牌'"></p>
+            <button class="delete" aria-label="close" @click="closeModal()"></button>
+        </header>
+        <section class="modal-card-body">
+            <div class="field">
+                <label class="label">手牌编号</label>
+                <div class="control"><input class="input" type="text" x-model="editing.wristband_no" :disabled="editing.id" placeholder="如: M001"></div>
+            </div>
+            <div class="field">
+                <label class="label">所属浴区</label>
+                <div class="control">
+                    <div class="select is-fullwidth">
+                        <select x-model="editing.bath_area_id">
+                            <option value="">请选择</option>
+                            <template x-for="a in areas" :key="a.id">
+                                <option :value="a.id" x-text="a.name"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button is-success" @click="save()">保存</button>
+            <button class="button" @click="closeModal()">取消</button>
+        </footer>
+    </div>
+</div>
+
+<script>
+function wristbandApp() {
+    return {
+        areas: [],
+        bands: [],
+        showModal: false,
+        editing: {},
+        filter: { status: '', area_id: '' },
+        async init() {
+            this.areas = {{!areas_json}};
+            await this.load();
+        },
+        async load() {
+            const qs = new URLSearchParams(this.filter).toString();
+            const r = await fetch('/api/wristbands?' + qs); const d = await r.json();
+            if (d.success) this.bands = d.data || [];
+        },
+        showCreate() {
+            this.editing = { wristband_no: '', bath_area_id: '' };
+            this.showModal = true;
+        },
+        showEdit(b) { this.editing = { ...b }; this.showModal = true; },
+        closeModal() { this.showModal = false; },
+        async save() {
+            if (!this.editing.wristband_no) { alert('请输入手牌编号'); return; }
+            const url = this.editing.id ? `/api/wristbands/${this.editing.id}` : '/api/wristbands';
+            const method = this.editing.id ? 'PUT' : 'POST';
+            const body = { ...this.editing };
+            if (!body.bath_area_id) body.bath_area_id = null;
+            const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const d = await r.json(); alert(d.message);
+            if (d.success) { this.closeModal(); await this.load(); }
+        },
+        async remove(b) {
+            if (!confirm('确定删除该手牌？')) return;
+            const r = await fetch(`/api/wristbands/${b.id}`, { method: 'DELETE' });
+            const d = await r.json(); alert(d.message);
+            if (d.success) await this.load();
+        }
+    };
+}
+</script>
+</body>
+</html>

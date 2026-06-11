@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>遗失申报</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.0/dist/cdn.min.js"></script>
+</head>
+<body style="background-color: #f5f5f5; min-height: 100vh;" x-data="lossApp()">
+<nav class="navbar is-primary" role="navigation">
+    <div class="navbar-brand">
+        <a class="navbar-item" style="font-weight:700;font-size:1.2rem;" href="/">🛁 澡堂手牌管理系统</a>
+    </div>
+    <div class="navbar-menu">
+        <div class="navbar-start">
+            <a class="navbar-item" href="/">首页</a>
+            <a class="navbar-item" href="/bath-areas">浴区管理</a>
+            <a class="navbar-item" href="/wristbands">手牌配置</a>
+            <a class="navbar-item" href="/issue">入场发牌</a>
+            <a class="navbar-item" href="/return">退牌结算</a>
+            <a class="navbar-item is-active" href="/report-loss">遗失申报</a>
+            <a class="navbar-item" href="/reissue-review">补办审核</a>
+            <a class="navbar-item" href="/shift-summary">交接汇总</a>
+        </div>
+        <div class="navbar-end">
+            <div class="navbar-item">
+                <span class="mr-3">欢迎，{{user['full_name']}}</span>
+                <a class="button is-light" href="/logout">退出登录</a>
+            </div>
+        </div>
+    </div>
+</nav>
+<section class="section">
+    <div class="container">
+        <h1 class="title">遗失申报</h1>
+        <div class="notification is-warning">
+            <strong>注意：</strong>申报遗失后，原手牌将立即冻结，不可退回流转。请确认后操作。
+        </div>
+        <div class="box">
+            <div class="field has-addons">
+                <div class="control is-expanded">
+                    <input class="input is-medium" type="text" x-model="keyword" @keyup.enter="search()" placeholder="输入流水号 / 手牌编号 / 手机号 / 姓名搜索">
+                </div>
+                <div class="control">
+                    <button class="button is-primary is-medium" @click="search()">搜索</button>
+                </div>
+            </div>
+        </div>
+        <div class="box" style="overflow-x:auto;">
+            <table class="table is-fullwidth is-striped">
+                <thead>
+                    <tr><th>流水号</th><th>手牌</th><th>顾客</th><th>电话</th><th>浴区</th><th>发牌时间</th><th>押金</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="r in records" :key="r.id">
+                        <tr>
+                            <td><small x-text="r.serial_no"></small></td>
+                            <td><strong x-text="r.wristband_no"></strong></td>
+                            <td x-text="r.customer_name"></td>
+                            <td x-text="r.phone"></td>
+                            <td x-text="r.bath_area_name"></td>
+                            <td><small x-text="r.issue_time"></small></td>
+                            <td>¥ <span x-text="parseFloat(r.deposit_amount).toFixed(2)"></span></td>
+                            <td><button class="button is-small is-warning" @click="showReport(r)">申报遗失</button></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <p x-show="records.length == 0" class="has-text-grey">暂无未退牌记录</p>
+        </div>
+    </div>
+</section>
+
+<div class="modal" :class="{'is-active': showModal}">
+    <div class="modal-background" @click="showModal=false"></div>
+    <div class="modal-card">
+        <header class="modal-card-head">
+            <p class="modal-card-title">遗失申报确认</p>
+            <button class="delete" @click="showModal=false"></button>
+        </header>
+        <section class="modal-card-body" x-show="current">
+            <div class="notification is-danger">
+                <p><strong>⚠️ 警告：</strong>申报遗失后，原手牌将立即冻结，不可退回流转！</p>
+            </div>
+            <div class="content">
+                <p>流水号：<strong x-text="current.serial_no"></strong></p>
+                <p>手牌编号：<strong x-text="current.wristband_no"></strong></p>
+                <p>顾客姓名：<span x-text="current.customer_name"></span></p>
+                <p>联系电话：<span x-text="current.phone"></span></p>
+                <p>浴区：<span x-text="current.bath_area_name"></span></p>
+                <p>发牌时间：<small x-text="current.issue_time"></small></p>
+                <p>押金：¥ <span x-text="parseFloat(current.deposit_amount).toFixed(2)"></span></p>
+            </div>
+            <div class="field">
+                <label class="label">遗失情况说明</label>
+                <div class="control">
+                    <textarea class="textarea" x-model="loss_description" placeholder="请简要描述遗失情况"></textarea>
+                </div>
+            </div>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button is-danger" @click="submit()">确认申报遗失</button>
+            <button class="button" @click="showModal=false">取消</button>
+        </footer>
+    </div>
+</div>
+
+<script>
+function lossApp() {
+    return {
+        keyword: '',
+        records: [],
+        showModal: false,
+        current: null,
+        loss_description: '',
+        async init() { await this.search(); },
+        async search() {
+            const r = await fetch('/api/loss/search?keyword=' + encodeURIComponent(this.keyword));
+            const d = await r.json();
+            if (d.success) this.records = d.data || [];
+        },
+        showReport(r) { this.current = r; this.loss_description = ''; this.showModal = true; },
+        async submit() {
+            if (!confirm('确认申报遗失？原手牌将立即冻结！')) return;
+            const r = await fetch('/api/loss/report', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ issue_record_id: this.current.id, loss_description: this.loss_description })
+            });
+            const d = await r.json(); alert(d.message);
+            if (d.success) { this.showModal = false; await this.search(); }
+        }
+    };
+}
+</script>
+</body>
+</html>

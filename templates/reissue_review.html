@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>补办审核</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.0/dist/cdn.min.js"></script>
+    <style>
+        .tag-pending { background-color: #ffdd57 !important; color: #333; }
+        .tag-approved { background-color: #48c78e !important; }
+        .tag-rejected { background-color: #f14668 !important; }
+    </style>
+</head>
+<body style="background-color: #f5f5f5; min-height: 100vh;" x-data="reissueApp()">
+<nav class="navbar is-primary" role="navigation">
+    <div class="navbar-brand">
+        <a class="navbar-item" style="font-weight:700;font-size:1.2rem;" href="/">🛁 澡堂手牌管理系统</a>
+    </div>
+    <div class="navbar-menu">
+        <div class="navbar-start">
+            <a class="navbar-item" href="/">首页</a>
+            <a class="navbar-item" href="/bath-areas">浴区管理</a>
+            <a class="navbar-item" href="/wristbands">手牌配置</a>
+            <a class="navbar-item" href="/issue">入场发牌</a>
+            <a class="navbar-item" href="/return">退牌结算</a>
+            <a class="navbar-item" href="/report-loss">遗失申报</a>
+            <a class="navbar-item is-active" href="/reissue-review">补办审核</a>
+            <a class="navbar-item" href="/shift-summary">交接汇总</a>
+        </div>
+        <div class="navbar-end">
+            <div class="navbar-item">
+                <span class="mr-3">欢迎，{{user['full_name']}}</span>
+                <a class="button is-light" href="/logout">退出登录</a>
+            </div>
+        </div>
+    </div>
+</nav>
+<section class="section">
+    <div class="container">
+        <h1 class="title">补办审核</h1>
+        <div class="notification is-info">
+            <strong>说明：</strong>审核通过前不能直接关闭本次发牌记录。审核通过后可分配新手牌并结算相关费用。
+        </div>
+        <div class="box" style="overflow-x:auto;">
+            <table class="table is-fullwidth is-striped">
+                <thead>
+                    <tr><th>申请时间</th><th>流水号</th><th>原手牌</th><th>顾客</th><th>电话</th><th>浴区</th><th>状态</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="r in records" :key="r.id">
+                        <tr>
+                            <td><small x-text="r.report_time"></small></td>
+                            <td><small x-text="r.serial_no"></small></td>
+                            <td><strong x-text="r.old_wristband_no"></strong></td>
+                            <td x-text="r.customer_name"></td>
+                            <td x-text="r.phone"></td>
+                            <td x-text="r.bath_area_name"></td>
+                            <td>
+                                <span class="tag" :class="'tag-' + r.review_status" x-text="{pending:'待审核', approved:'已通过', rejected:'已驳回'}[r.review_status]"></span>
+                            </td>
+                            <td>
+                                <button class="button is-small is-primary" x-show="r.review_status == 'pending'" @click="showReview(r)">审核</button>
+                                <button class="button is-small is-info" x-show="r.review_status != 'pending'" @click="showDetail(r)">详情</button>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <p x-show="records.length == 0" class="has-text-grey">暂无补办申请</p>
+        </div>
+    </div>
+</section>
+
+<div class="modal" :class="{'is-active': showModal}">
+    <div class="modal-background" @click="showModal=false"></div>
+    <div class="modal-card" style="max-width: 600px;">
+        <header class="modal-card-head">
+            <p class="modal-card-title" x-text="current && current.review_status == 'pending' ? '补办审核' : '补办详情'"></p>
+            <button class="delete" @click="showModal=false"></button>
+        </header>
+        <section class="modal-card-body" x-show="current">
+            <div class="content">
+                <p>申请时间：<small x-text="current.report_time"></small></p>
+                <p>流水号：<strong x-text="current.serial_no"></strong></p>
+                <p>原手牌：<strong x-text="current.old_wristband_no"></strong> <span class="tag is-danger">已冻结</span></p>
+                <p>顾客：<span x-text="current.customer_name"></span> | 电话：<span x-text="current.phone"></span></p>
+                <p>浴区：<span x-text="current.bath_area_name"></span></p>
+                <p>基础费：¥ <span x-text="parseFloat(current.base_fee).toFixed(2)"></span> | 押金：¥ <span x-text="parseFloat(current.deposit_amount).toFixed(2)"></span></p>
+                <p x-show="current.loss_description">情况说明：<span x-text="current.loss_description"></span></p>
+            </div>
+            <div x-show="current.review_status == 'pending'">
+                <hr>
+                <div class="field">
+                    <label class="label">责任判定</label>
+                    <div class="control">
+                        <label class="radio"><input type="radio" x-model="form.is_responsible" :value="true"> 顾客责任（需赔付）</label>
+                        <label class="radio"><input type="radio" x-model="form.is_responsible" :value="false"> 非顾客责任</label>
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label">遗失赔偿费 (元)</label>
+                    <div class="control"><input class="input" type="number" step="0.01" x-model="form.loss_fee" min="0"></div>
+                </div>
+                <div class="field">
+                    <label class="label">补办手续费 (元)</label>
+                    <div class="control"><input class="input" type="number" step="0.01" x-model="form.reissue_fee" min="0"></div>
+                </div>
+                <div class="field">
+                    <label class="label">分配新手牌（可选）</label>
+                    <div class="control">
+                        <div class="select is-fullwidth">
+                            <select x-model="form.new_wristband_id">
+                                <option value="">暂不分配新牌</option>
+                                <template x-for="b in availableBands" :key="b.id">
+                                    <option :value="b.id" x-text="b.wristband_no + ' - ' + (b.bath_area_name || '通用')"></option>
+                                </template>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label">审核意见</label>
+                    <div class="control"><textarea class="textarea" x-model="form.review_comment" placeholder="请输入审核意见"></textarea></div>
+                </div>
+            </div>
+            <div x-show="current.review_status != 'pending'">
+                <hr>
+                <p>审核时间：<small x-text="current.review_time"></small></p>
+                <p>审核结果：<span class="tag" :class="'tag-' + current.review_status" x-text="{pending:'待审核', approved:'已通过', rejected:'已驳回'}[current.review_status]"></span></p>
+                <p x-show="current.review_comment">审核意见：<span x-text="current.review_comment"></span></p>
+            </div>
+        </section>
+        <footer class="modal-card-foot" x-show="current && current.review_status == 'pending'">
+            <button class="button is-success" @click="submit('approve')">审核通过</button>
+            <button class="button is-danger" @click="submit('reject')">驳回申请</button>
+            <button class="button" @click="showModal=false">取消</button>
+        </footer>
+    </div>
+</div>
+
+<script>
+function reissueApp() {
+    return {
+        records: [],
+        availableBands: [],
+        showModal: false,
+        current: null,
+        form: { loss_fee: 0, reissue_fee: 0, new_wristband_id: '', review_comment: '', is_responsible: true },
+        async init() { await this.load(); },
+        async load() {
+            const r = await fetch('/api/reissue/pending'); const d = await r.json();
+            if (d.success) this.records = d.data || [];
+        },
+        async loadAvailable() {
+            if (!this.current) return;
+            const qs = this.current.bath_area_id ? 'area_id=' + this.current.bath_area_id : '';
+            const r = await fetch('/api/issue/available-bands?' + qs); const d = await r.json();
+            if (d.success) this.availableBands = d.data || [];
+        },
+        async showReview(r) {
+            this.current = r;
+            this.form = { loss_fee: 0, reissue_fee: 0, new_wristband_id: '', review_comment: '', is_responsible: true };
+            this.showModal = true;
+            await this.loadAvailable();
+        },
+        showDetail(r) { this.current = r; this.showModal = true; },
+        async submit(decision) {
+            const body = { ...this.form, decision };
+            if (!body.new_wristband_id) body.new_wristband_id = null;
+            const r = await fetch(`/api/reissue/${this.current.id}/review`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const d = await r.json(); alert(d.message);
+            if (d.success) { this.showModal = false; await this.load(); }
+        }
+    };
+}
+</script>
+</body>
+</html>

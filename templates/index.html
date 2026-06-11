@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>首页 - 澡堂手牌管理系统</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+</head>
+<body style="background-color: #f5f5f5; min-height: 100vh;">
+<nav class="navbar is-primary" role="navigation">
+    <div class="navbar-brand">
+        <a class="navbar-item" style="font-weight:700;font-size:1.2rem;" href="/">🛁 澡堂手牌管理系统</a>
+    </div>
+    <div class="navbar-menu">
+        <div class="navbar-start">
+            <a class="navbar-item" href="/">首页</a>
+            <a class="navbar-item" href="/bath-areas">浴区管理</a>
+            <a class="navbar-item" href="/wristbands">手牌配置</a>
+            <a class="navbar-item" href="/issue">入场发牌</a>
+            <a class="navbar-item" href="/return">退牌结算</a>
+            <a class="navbar-item" href="/report-loss">遗失申报</a>
+            <a class="navbar-item" href="/reissue-review">补办审核</a>
+            <a class="navbar-item" href="/shift-summary">交接汇总</a>
+        </div>
+        <div class="navbar-end">
+            <div class="navbar-item">
+                <span class="mr-3">欢迎，{{user['full_name']}}</span>
+                <a class="button is-light" href="/logout">退出登录</a>
+            </div>
+        </div>
+    </div>
+</nav>
+<section class="section">
+    <div class="container">
+        <h1 class="title">数据概览</h1>
+        <div class="columns">
+            <div class="column">
+                <div class="notification is-success">
+                    <p class="heading">可用手牌</p>
+                    <p class="title">{{stats['available_bands']}}</p>
+                </div>
+            </div>
+            <div class="column">
+                <div class="notification is-info">
+                    <p class="heading">已发放</p>
+                    <p class="title">{{stats['issued_bands']}}</p>
+                </div>
+            </div>
+            <div class="column">
+                <div class="notification is-danger">
+                    <p class="heading">已冻结</p>
+                    <p class="title">{{stats['frozen_bands']}}</p>
+                </div>
+            </div>
+            <div class="column">
+                <div class="notification is-warning">
+                    <p class="heading">未结算</p>
+                    <p class="title">{{stats['unsettled']}}</p>
+                </div>
+            </div>
+            <div class="column">
+                <div class="notification is-primary">
+                    <p class="heading">待审核补办</p>
+                    <p class="title">{{stats['pending_review']}}</p>
+                </div>
+            </div>
+        </div>
+        <div class="box">
+            <h2 class="subtitle">快捷操作</h2>
+            <div class="buttons">
+                <a class="button is-primary is-medium" href="/issue">入场发牌</a>
+                <a class="button is-info is-medium" href="/return">退牌结算</a>
+                <a class="button is-warning is-medium" href="/report-loss">遗失申报</a>
+                <a class="button is-success is-medium" href="/reissue-review">补办审核</a>
+                <a class="button is-link is-medium" href="/shift-summary">交接汇总</a>
+            </div>
+        </div>
+    </div>
+</section>
+</body>
+</html>

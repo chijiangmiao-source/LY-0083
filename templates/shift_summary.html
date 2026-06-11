@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>当班交接汇总</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.0/dist/cdn.min.js"></script>
+    <style>
+        .tag-unsettled { background-color: #ff9f43 !important; }
+        .tag-settled { background-color: #48c78e !important; }
+        .tag-lost { background-color: #f14668 !important; }
+        .tag-normal { background-color: #48c78e !important; }
+    </style>
+</head>
+<body style="background-color: #f5f5f5; min-height: 100vh;" x-data="shiftApp()">
+<nav class="navbar is-primary" role="navigation">
+    <div class="navbar-brand">
+        <a class="navbar-item" style="font-weight:700;font-size:1.2rem;" href="/">🛁 澡堂手牌管理系统</a>
+    </div>
+    <div class="navbar-menu">
+        <div class="navbar-start">
+            <a class="navbar-item" href="/">首页</a>
+            <a class="navbar-item" href="/bath-areas">浴区管理</a>
+            <a class="navbar-item" href="/wristbands">手牌配置</a>
+            <a class="navbar-item" href="/issue">入场发牌</a>
+            <a class="navbar-item" href="/return">退牌结算</a>
+            <a class="navbar-item" href="/report-loss">遗失申报</a>
+            <a class="navbar-item" href="/reissue-review">补办审核</a>
+            <a class="navbar-item is-active" href="/shift-summary">交接汇总</a>
+        </div>
+        <div class="navbar-end">
+            <div class="navbar-item">
+                <span class="mr-3">欢迎，{{user['full_name']}}</span>
+                <a class="button is-light" href="/logout">退出登录</a>
+            </div>
+        </div>
+    </div>
+</nav>
+<section class="section">
+    <div class="container">
+        <div class="level">
+            <div class="level-left">
+                <h1 class="title">当班交接汇总</h1>
+            </div>
+            <div class="level-right">
+                <button class="button is-warning is-medium" @click="closeShift()" x-show="shift && shift.status == 'active'">
+                    完成交接 / 开始新班次
+                </button>
+            </div>
+        </div>
+
+        <div class="notification is-danger" x-show="!shift">
+            <strong>当前没有活跃班次，请重新登录以创建新班次。</strong>
+        </div>
+
+        <template x-if="shift">
+            <div>
+                <div class="box">
+                    <div class="level">
+                        <div class="level-item has-text-centered">
+                            <div>
+                                <p class="heading">班次编号</p>
+                                <p class="title is-4" x-text="shift.shift_no"></p>
+                            </div>
+                        </div>
+                        <div class="level-item has-text-centered">
+                            <div>
+                                <p class="heading">开始时间</p>
+                                <p class="title is-4"><small x-text="shift.start_time"></small></p>
+                            </div>
+                        </div>
+                        <div class="level-item has-text-centered">
+                            <div>
+                                <p class="heading">班次状态</p>
+                                <p class="tag is-medium" :class="shift.status == 'active' ? 'is-primary' : 'is-grey'" x-text="shift.status == 'active' ? '进行中' : '已交接'"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="columns">
+                    <div class="column">
+                        <div class="notification is-info">
+                            <p class="heading">当班发牌数</p>
+                            <p class="title" x-text="summary ? summary.issue_count : 0"></p>
+                        </div>
+                    </div>
+                    <div class="column">
+                        <div class="notification is-warning">
+                            <p class="heading">遗失补办数</p>
+                            <p class="title" x-text="summary ? summary.reissue_count : 0"></p>
+                        </div>
+                    </div>
+                    <div class="column">
+                        <div class="notification is-danger">
+                            <p class="heading">未结算记录</p>
+                            <p class="title" x-text="summary ? summary.unsettled_count : 0"></p>
+                        </div>
+                    </div>
+                    <div class="column">
+                        <div class="notification is-success">
+                            <p class="heading">已结算收入</p>
+                            <p class="title">¥ <span x-text="summary ? parseFloat(summary.total_income).toFixed(2) : '0.00'"></span></p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="box" style="overflow-x:auto;">
+                    <h2 class="subtitle">当班发牌明细</h2>
+                    <table class="table is-fullwidth is-striped">
+                        <thead>
+                            <tr>
+                                <th>流水号</th><th>手牌</th><th>顾客</th><th>电话</th><th>浴区</th>
+                                <th>发牌时间</th><th>退牌时间</th><th>费用</th><th>遗失补办</th><th>状态</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="r in records" :key="r.id">
+                                <tr>
+                                    <td><small x-text="r.serial_no"></small></td>
+                                    <td><strong x-text="r.wristband_no"></strong></td>
+                                    <td x-text="r.customer_name"></td>
+                                    <td x-text="r.phone"></td>
+                                    <td x-text="r.bath_area_name"></td>
+                                    <td><small x-text="r.issue_time"></small></td>
+                                    <td><small x-text="r.return_time || '-'"></small></td>
+                                    <td>
+                                        ¥ <span x-text="(parseFloat(r.base_fee||0)+parseFloat(r.extra_fee||0)+parseFloat(r.loss_fee||0)+parseFloat(r.reissue_fee||0)).toFixed(2)"></span>
+                                    </td>
+                                    <td>
+                                        <span class="tag" x-show="r.has_reissue" style="background-color:#ff9f43;">是</span>
+                                        <span class="tag is-light" x-show="!r.has_reissue">否</span>
+                                    </td>
+                                    <td>
+                                        <span class="tag" :class="'tag-' + r.fee_status" x-text="r.fee_status == 'settled' ? '已结算' : '未结算'"></span>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                    <p x-show="records.length == 0" class="has-text-grey">暂无当班记录</p>
+                </div>
+            </div>
+        </template>
+    </div>
+</section>
+
+<script>
+function shiftApp() {
+    return {
+        shift: null,
+        records: [],
+        summary: null,
+        init() {
+            this.shift = {{!shift_json}};
+            this.records = {{!records_json}};
+            this.summary = {{!summary_json}};
+        },
+        async closeShift() {
+            if (!confirm('确认完成当前班次交接？将自动开始新班次。')) return;
+            const r = await fetch('/api/shift/close', { method: 'POST' });
+            const d = await r.json(); alert(d.message);
+            if (d.success) { location.reload(); }
+        }
+    };
+}
+</script>
+</body>
+</html>
