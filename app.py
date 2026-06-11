@@ -100,7 +100,7 @@ def server_static(filepath):
 
 @app.route('/login', method='GET')
 def login_page():
-    return template('templates/login.html')
+    return template('templates/login.html', error='')
 
 
 @app.route('/login', method='POST')
