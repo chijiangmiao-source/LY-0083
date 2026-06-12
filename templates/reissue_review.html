@@ -10,6 +10,9 @@
         .tag-pending { background-color: #ffdd57 !important; color: #333; }
         .tag-approved { background-color: #48c78e !important; }
         .tag-rejected { background-color: #f14668 !important; }
+        .tag-member { background: linear-gradient(135deg, #667eea, #764ba2); color: #fff !important; }
+        .member-info-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border-radius: 8px; padding: 12px; }
+        .member-info-card .tag { background: rgba(255,255,255,0.25) !important; color: #fff !important; }
     </style>
 </head>
 <body style="background-color: #f5f5f5; min-height: 100vh;" x-data="reissueApp()">
@@ -26,6 +29,8 @@
             <a class="navbar-item" href="/return">退牌结算</a>
             <a class="navbar-item" href="/report-loss">遗失申报</a>
             <a class="navbar-item is-active" href="/reissue-review">补办审核</a>
+            <a class="navbar-item" href="/members">会员管理</a>
+            <a class="navbar-item" href="/warnings">预警中心</a>
             <a class="navbar-item" href="/shift-summary">交接汇总</a>
         </div>
         <div class="navbar-end">
@@ -45,7 +50,7 @@
         <div class="box" style="overflow-x:auto;">
             <table class="table is-fullwidth is-striped">
                 <thead>
-                    <tr><th>申请时间</th><th>流水号</th><th>原手牌</th><th>顾客</th><th>电话</th><th>浴区</th><th>状态</th><th>操作</th></tr>
+                    <tr><th>申请时间</th><th>流水号</th><th>原手牌</th><th>顾客</th><th>会员</th><th>电话</th><th>浴区</th><th>状态</th><th>操作</th></tr>
                 </thead>
                 <tbody>
                     <template x-for="r in records" :key="r.id">
@@ -54,6 +59,10 @@
                             <td><small x-text="r.serial_no"></small></td>
                             <td><strong x-text="r.old_wristband_no"></strong></td>
                             <td x-text="r.customer_name"></td>
+                            <td>
+                                <span class="tag tag-member is-small" x-show="r.member_id" x-text="r.level_name || '会员'"></span>
+                                <span class="tag is-light is-small" x-show="!r.member_id">散客</span>
+                            </td>
                             <td x-text="r.phone"></td>
                             <td x-text="r.bath_area_name"></td>
                             <td>
@@ -89,6 +98,45 @@
                 <p>基础费：¥ <span x-text="parseFloat(current.base_fee).toFixed(2)"></span> | 押金：¥ <span x-text="parseFloat(current.deposit_amount).toFixed(2)"></span></p>
                 <p x-show="current.loss_description">情况说明：<span x-text="current.loss_description"></span></p>
             </div>
+
+            <div class="member-info-card mb-3" x-show="current.member_id">
+                <div class="level is-mobile mb-2">
+                    <div class="level-left">
+                        <div>
+                            <p class="is-size-7 has-text-white-ter">🎖️ 会员身份</p>
+                            <p class="is-size-5 has-text-weight-bold" x-text="current.member_name || '未实名'"></p>
+                        </div>
+                    </div>
+                    <div class="level-right">
+                        <span class="tag" x-text="current.level_name || '会员'"></span>
+                    </div>
+                </div>
+                <p class="is-size-7 mb-1">会员号：<strong x-text="current.member_no"></strong></p>
+                <div class="columns is-mobile is-gapless mt-2">
+                    <div class="column">
+                        <p class="is-size-7 has-text-white-ter">储值余额</p>
+                        <p class="has-text-weight-bold">¥ <span x-text="parseFloat(current.member_balance||0).toFixed(2)"></span></p>
+                    </div>
+                    <div class="column has-text-centered">
+                        <p class="is-size-7 has-text-white-ter">遗失费折扣</p>
+                        <p class="has-text-weight-bold"><span x-text="current.effective_loss_fee_discount_rate || current.loss_fee_discount_rate || 100"></span>%</p>
+                    </div>
+                    <div class="column has-text-right">
+                        <p class="is-size-7 has-text-white-ter">补办费折扣</p>
+                        <p class="has-text-weight-bold"><span x-text="current.effective_reissue_fee_discount_rate || current.reissue_fee_discount_rate || 100"></span>%</p>
+                    </div>
+                </div>
+                <div x-show="current.loss_promotions && current.loss_promotions.length > 0" class="mt-2 p-2" style="background:rgba(255,255,255,0.15);border-radius:4px;">
+                    <p class="is-size-7 has-text-white-ter">🎉 活动优惠叠加：</p>
+                    <template x-for="p in (current.loss_promotions || [])" :key="p.id">
+                        <p class="is-size-7"><span x-text="p.name"></span> - 遗失费<span x-text="p.discount_rate"></span>%折</p>
+                    </template>
+                    <template x-for="p in (current.reissue_promotions || [])" :key="'r'+p.id">
+                        <p class="is-size-7"><span x-text="p.name"></span> - 补办费<span x-text="p.discount_rate"></span>%折</p>
+                    </template>
+                </div>
+            </div>
+
             <div x-show="current.review_status == 'pending'">
                 <hr>
                 <div class="field">
@@ -99,12 +147,26 @@
                     </div>
                 </div>
                 <div class="field">
-                    <label class="label">遗失赔偿费 (元)</label>
-                    <div class="control"><input class="input" type="number" step="0.01" x-model="form.loss_fee" min="0"></div>
+                    <label class="label">遗失赔偿费 (元)
+                        <span class="tag is-warning is-light is-small ml-1" x-show="current && current.member_id && (current.effective_loss_fee_discount_rate || current.loss_fee_discount_rate) < 100" x-text="'会员' + (current.effective_loss_fee_discount_rate || current.loss_fee_discount_rate) + '%折'"></span>
+                    </label>
+                    <div class="control">
+                        <div class="field has-addons">
+                            <div class="control is-expanded"><input class="input" type="number" step="0.01" x-model.number="form.loss_fee_original" min="0" @input="calcDiscount()" placeholder="原价"></div>
+                            <span class="button is-static" x-show="current && current.member_id && current.loss_fee_discount_rate < 100">折后 ¥<span x-text="form.loss_fee.toFixed(2)"></span></span>
+                        </div>
+                    </div>
                 </div>
                 <div class="field">
-                    <label class="label">补办手续费 (元)</label>
-                    <div class="control"><input class="input" type="number" step="0.01" x-model="form.reissue_fee" min="0"></div>
+                    <label class="label">补办手续费 (元)
+                        <span class="tag is-warning is-light is-small ml-1" x-show="current && current.member_id && (current.effective_reissue_fee_discount_rate || current.reissue_fee_discount_rate) < 100" x-text="'会员' + (current.effective_reissue_fee_discount_rate || current.reissue_fee_discount_rate) + '%折'"></span>
+                    </label>
+                    <div class="control">
+                        <div class="field has-addons">
+                            <div class="control is-expanded"><input class="input" type="number" step="0.01" x-model.number="form.reissue_fee_original" min="0" @input="calcDiscount()" placeholder="原价"></div>
+                            <span class="button is-static" x-show="current && current.member_id && current.reissue_fee_discount_rate < 100">折后 ¥<span x-text="form.reissue_fee.toFixed(2)"></span></span>
+                        </div>
+                    </div>
                 </div>
                 <div class="field">
                     <label class="label">分配新手牌（可选）</label>
@@ -146,7 +208,7 @@ function reissueApp() {
         availableBands: [],
         showModal: false,
         current: null,
-        form: { loss_fee: 0, reissue_fee: 0, new_wristband_id: '', review_comment: '', is_responsible: true },
+        form: { loss_fee: 0, reissue_fee: 0, loss_fee_original: 0, reissue_fee_original: 0, new_wristband_id: '', review_comment: '', is_responsible: true },
         async init() { await this.load(); },
         async load() {
             const r = await fetch('/api/reissue/pending'); const d = await r.json();
@@ -160,13 +222,29 @@ function reissueApp() {
         },
         async showReview(r) {
             this.current = r;
-            this.form = { loss_fee: 0, reissue_fee: 0, new_wristband_id: '', review_comment: '', is_responsible: true };
+            this.form = { loss_fee: 0, reissue_fee: 0, loss_fee_original: 0, reissue_fee_original: 0, new_wristband_id: '', review_comment: '', is_responsible: true };
             this.showModal = true;
             await this.loadAvailable();
         },
         showDetail(r) { this.current = r; this.showModal = true; },
+        calcDiscount() {
+            if (this.current && this.current.member_id) {
+                const lossRate = parseFloat(this.current.effective_loss_fee_discount_rate || this.current.loss_fee_discount_rate || 100);
+                const reissueRate = parseFloat(this.current.effective_reissue_fee_discount_rate || this.current.reissue_fee_discount_rate || 100);
+                this.form.loss_fee = Math.round((this.form.loss_fee_original || 0) * lossRate) / 100;
+                this.form.reissue_fee = Math.round((this.form.reissue_fee_original || 0) * reissueRate) / 100;
+            } else {
+                this.form.loss_fee = this.form.loss_fee_original || 0;
+                this.form.reissue_fee = this.form.reissue_fee_original || 0;
+            }
+        },
         async submit(decision) {
-            const body = { ...this.form, decision };
+            const body = {
+                ...this.form,
+                decision,
+                loss_fee: this.form.loss_fee,
+                reissue_fee: this.form.reissue_fee
+            };
             if (!body.new_wristband_id) body.new_wristband_id = null;
             const r = await fetch(`/api/reissue/${this.current.id}/review`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },

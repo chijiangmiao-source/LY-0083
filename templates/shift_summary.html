@@ -120,6 +120,79 @@
                     </div>
                 </div>
 
+                <div class="box" style="background: linear-gradient(135deg, #f5f0ff 0%, #e8f4fd 100%); border-color: #667eea;">
+                    <div class="level is-mobile mb-3">
+                        <div class="level-left"><h2 class="subtitle mb-0">💳 会员联动数据</h2></div>
+                        <div class="level-right">
+                            <span class="tag is-link is-light" x-show="summary" x-text="'会员发牌 ' + (summary.member_issue_count || 0) + ' 次'"></span>
+                        </div>
+                    </div>
+                    <div class="columns">
+                        <div class="column">
+                            <div class="notification is-link is-light py-3 px-3 mb-0">
+                                <p class="heading is-size-7">会员发牌数</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-link" x-text="summary ? summary.member_issue_count : 0"></p>
+                            </div>
+                        </div>
+                        <div class="column">
+                            <div class="notification is-link is-light py-3 px-3 mb-0">
+                                <p class="heading is-size-7">会员消费笔数</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-link" x-text="summary ? summary.member_consume_count : 0"></p>
+                            </div>
+                        </div>
+                        <div class="column">
+                            <div class="notification is-success is-light py-3 px-3 mb-0">
+                                <p class="heading is-size-7">新注册会员</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-success" x-text="summary ? summary.member_new_count : 0"></p>
+                            </div>
+                        </div>
+                        <div class="column">
+                            <div class="notification is-success is-light py-3 px-3 mb-0">
+                                <p class="heading is-size-7">储值充值</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-success">¥ <span x-text="summary ? parseFloat(summary.member_top_up_total).toFixed(2) : '0.00'"></span></p>
+                            </div>
+                        </div>
+                        <div class="column">
+                            <div class="notification is-info is-light py-3 px-3 mb-0">
+                                <p class="heading is-size-7">套餐购买</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-info" x-text="summary ? summary.member_package_purchase_count : 0"></p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="columns mt-1">
+                        <div class="column">
+                            <div class="notification is-info is-light py-3 px-3 mb-0">
+                                <p class="heading is-size-7">套餐核销</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-info" x-text="summary ? summary.member_package_verify_count : 0"></p>
+                            </div>
+                        </div>
+                        <div class="column">
+                            <div class="notification is-warning is-light py-3 px-3 mb-0">
+                                <p class="heading is-size-7">余额抵扣</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-warning-dark">¥ <span x-text="summary ? parseFloat(summary.member_balance_deduction).toFixed(2) : '0.00'"></span></p>
+                            </div>
+                        </div>
+                        <div class="column">
+                            <div class="notification is-primary is-light py-3 px-3 mb-0">
+                                <p class="heading is-size-7">套餐抵扣</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-primary">¥ <span x-text="summary ? parseFloat(summary.member_package_deduction).toFixed(2) : '0.00'"></span></p>
+                            </div>
+                        </div>
+                        <div class="column">
+                            <div class="notification is-warning is-light py-3 px-3 mb-0">
+                                <p class="heading is-size-7">赠送余额使用</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-warning-dark">¥ <span x-text="summary ? parseFloat(summary.member_gift_balance_used).toFixed(2) : '0.00'"></span></p>
+                            </div>
+                        </div>
+                        <div class="column">
+                            <div class="notification is-danger is-light py-3 px-3 mb-0">
+                                <p class="heading is-size-7">抵扣合计</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-danger">¥ <span x-text="summary ? (parseFloat(summary.member_balance_deduction||0) + parseFloat(summary.member_package_deduction||0) + parseFloat(summary.member_gift_balance_used||0)).toFixed(2) : '0.00'"></span></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="box">
                     <div class="columns is-mobile is-vcentered mb-0">
                         <div class="column">
@@ -197,8 +270,8 @@
                     <table class="table is-fullwidth is-striped">
                         <thead>
                             <tr>
-                                <th>流水号</th><th>手牌</th><th>顾客</th><th>电话</th><th>浴区</th>
-                                <th>发牌时间</th><th>退牌时间</th><th>费用</th><th>遗失补办</th><th>状态</th>
+                                <th>流水号</th><th>手牌</th><th>顾客</th><th>会员</th><th>电话</th><th>浴区</th>
+                                <th>发牌时间</th><th>退牌时间</th><th>费用</th><th>抵扣</th><th>遗失补办</th><th>状态</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -207,12 +280,23 @@
                                     <td><small x-text="r.serial_no"></small></td>
                                     <td><strong x-text="r.wristband_no"></strong></td>
                                     <td x-text="r.customer_name"></td>
+                                    <td>
+                                        <span class="tag is-link is-light is-small" x-show="r.member_id" x-text="r.level_name || '会员'"></span>
+                                        <span class="tag is-light is-small" x-show="!r.member_id">散客</span>
+                                    </td>
                                     <td x-text="r.phone"></td>
                                     <td x-text="r.bath_area_name"></td>
                                     <td><small x-text="r.issue_time"></small></td>
                                     <td><small x-text="r.return_time || '-'"></small></td>
                                     <td>
                                         ¥ <span x-text="(parseFloat(r.base_fee||0)+parseFloat(r.extra_fee||0)+parseFloat(r.loss_fee||0)+parseFloat(r.reissue_fee||0)).toFixed(2)"></span>
+                                    </td>
+                                    <td>
+                                        <span class="is-size-7" x-show="parseFloat(r.package_deduction||0) > 0 || parseFloat(r.balance_deduction||0) > 0">
+                                            <span x-show="parseFloat(r.package_deduction||0) > 0" class="tag is-primary is-light is-small">套餐¥<span x-text="parseFloat(r.package_deduction).toFixed(2)"></span></span>
+                                            <span x-show="parseFloat(r.balance_deduction||0) > 0" class="tag is-success is-light is-small ml-1">余额¥<span x-text="parseFloat(r.balance_deduction).toFixed(2)"></span></span>
+                                        </span>
+                                        <span class="is-size-7 has-text-grey" x-show="parseFloat(r.package_deduction||0) == 0 && parseFloat(r.balance_deduction||0) == 0">-</span>
                                     </td>
                                     <td>
                                         <span class="tag" x-show="r.has_reissue" style="background-color:#ff9f43;">是</span>
@@ -256,7 +340,11 @@ function shiftApp() {
                 'long_unreturned':'长时间未退',
                 'frequent_loss':'频繁遗失',
                 'continuous_reissue':'连续补办',
-                'frozen_misuse':'冻结误操作'
+                'frozen_misuse':'冻结误操作',
+                'abnormal_discount':'异常优惠',
+                'balance_anomaly':'储值异常',
+                'topup_anomaly':'充值频次异常',
+                'member_upgrade':'会员升级'
             };
             return m[t] || t;
         },

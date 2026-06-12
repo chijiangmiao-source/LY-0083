@@ -8,6 +8,10 @@
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.0/dist/cdn.min.js"></script>
     <style>
         .tag-available { background-color: #48c78e !important; }
+        .member-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border-radius: 10px; padding: 16px; }
+        .member-card .tag { background: rgba(255,255,255,0.25) !important; color: #fff !important; }
+        .pkg-item { border: 1px solid #dbdbdb; border-radius: 6px; padding: 10px; margin-bottom: 8px; }
+        .pkg-item.active { border-color: #3298dc; background: #eff5fb; }
     </style>
 </head>
 <body style="background-color: #f5f5f5; min-height: 100vh;" x-data="issueApp()">
@@ -24,6 +28,7 @@
             <a class="navbar-item" href="/return">退牌结算</a>
             <a class="navbar-item" href="/report-loss">遗失申报</a>
             <a class="navbar-item" href="/reissue-review">补办审核</a>
+            <a class="navbar-item" href="/members">会员管理</a>
             <a class="navbar-item" href="/shift-summary">交接汇总</a>
         </div>
         <div class="navbar-end">
@@ -45,7 +50,7 @@
                         <label class="label">选择浴区</label>
                         <div class="control">
                             <div class="select is-fullwidth">
-                                <select x-model="form.bath_area_id" @change="loadBands()">
+                                <select x-model="form.bath_area_id" @change="loadBands(); lookupMember();">
                                     <option value="">全部浴区</option>
                                     <template x-for="a in areas" :key="a.id">
                                         <option :value="a.id" x-text="a.name + ' (¥' + a.base_price + '/押¥' + a.deposit_amount + ')'"></option>
@@ -60,9 +65,90 @@
                     </div>
                     <div class="field">
                         <label class="label">联系电话 <span class="has-text-danger">*</span></label>
-                        <div class="control"><input class="input" type="text" x-model="form.phone" @blur="checkPhone()" placeholder="请输入联系电话"></div>
+                        <div class="control has-icons-right">
+                            <input class="input" type="text" x-model="form.phone" @blur="onPhoneBlur()" @keyup.enter="onPhoneBlur()" placeholder="请输入联系电话">
+                            <span class="icon is-small is-right" x-show="memberInfo" style="pointer-events:none;">
+                                <span class="tag is-success is-small">已识别会员</span>
+                            </span>
+                        </div>
                         <p class="help is-danger" x-show="phoneError" x-text="phoneError"></p>
+                        <p class="help is-link" x-show="!memberInfo && form.phone && !phoneLookupLoading">
+                            <a href="/members" target="_blank">该手机号未注册？点击前往会员管理开户</a>
+                        </p>
+                        <p class="help" x-show="phoneLookupLoading">正在查询会员信息...</p>
                     </div>
+
+                    <div class="box mb-3" x-show="memberInfo" style="background:#f0f7ff; border-color:#3298dc;">
+                        <div class="member-card">
+                            <div class="level is-mobile mb-2">
+                                <div class="level-left">
+                                    <div>
+                                        <p class="is-size-7 has-text-white-ter">会员</p>
+                                        <p class="is-size-5 has-text-weight-bold" x-text="memberInfo.name || '未实名'"></p>
+                                    </div>
+                                </div>
+                                <div class="level-right">
+                                    <span class="tag" x-text="memberInfo.level_name"></span>
+                                </div>
+                            </div>
+                            <p class="is-size-7 mb-1">会员号：<strong x-text="memberInfo.member_no"></strong></p>
+                            <div class="columns is-mobile is-gapless mt-2">
+                                <div class="column">
+                                    <p class="is-size-7 has-text-white-ter">储值余额</p>
+                                    <p class="has-text-weight-bold">¥ <span x-text="parseFloat(memberInfo.balance||0).toFixed(2)"></span></p>
+                                </div>
+                                <div class="column">
+                                    <p class="is-size-7 has-text-white-ter">赠送余额</p>
+                                    <p class="has-text-weight-bold">¥ <span x-text="parseFloat(memberInfo.gift_balance||0).toFixed(2)"></span></p>
+                                </div>
+                                <div class="column has-text-right">
+                                    <p class="is-size-7 has-text-white-ter">消费折扣</p>
+                                    <p class="has-text-weight-bold"><span x-text="memberInfo.discount_rate"></span>%</p>
+                                </div>
+                            </div>
+                            <div class="mt-2" x-show="memberInfo.next_level" style="background:rgba(255,255,255,0.15);border-radius:4px;padding:6px 8px;">
+                                <p class="is-size-7 has-text-white-ter">距 <strong x-text="memberInfo.next_level?.name"></strong> 还需充值 ¥<span x-text="memberInfo.next_level?.gap?.toFixed(2)"></span></p>
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <p class="is-size-6 has-text-weight-semibold mb-2">💳 可用权益套餐 <span class="tag is-info is-light is-small ml-1" x-show="memberInfo.available_packages && memberInfo.available_packages.length > 0" x-text="memberInfo.available_packages.length + '个可用'"></span></p>
+                            <p class="is-size-7 has-text-grey mb-2" x-show="memberInfo.available_packages && memberInfo.available_packages.length > 0">
+                                退牌结算时将优先使用套餐核销抵扣基础费用，再用余额抵扣剩余费用
+                            </p>
+                            <div x-show="!memberInfo.available_packages || memberInfo.available_packages.length == 0" class="has-text-grey is-size-7">
+                                暂无可用套餐，<a href="/members" target="_blank">前往购买套餐 →</a>
+                            </div>
+                            <template x-for="pkg in memberInfo.available_packages" :key="pkg.id">
+                                <div class="pkg-item" style="display:flex;justify-content:space-between;align-items:center;">
+                                    <div>
+                                        <p class="has-text-weight-semibold"><span x-text="pkg.package_name"></span>
+                                            <span class="tag is-info is-light is-small ml-1" x-text="pkgTypeText(pkg.package_type)"></span>
+                                        </p>
+                                        <p class="is-size-7 has-text-grey">
+                                            剩余：<span x-text="pkg.remaining_count !== null ? pkg.remaining_count + '次' : '不限次'"></span>
+                                            &nbsp;|&nbsp; 到期：<span x-text="pkg.expire_at || '永久有效'"></span>
+                                        </p>
+                                    </div>
+                                    <div class="has-text-right">
+                                        <p class="tag is-success is-light is-small">退牌可抵 ¥<span x-text="parseFloat(pkg.original_value||0).toFixed(2)"></span></p>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                        <div class="mt-3" x-show="memberInfo.active_promotions && memberInfo.active_promotions.length > 0">
+                            <p class="is-size-6 has-text-weight-semibold mb-2">🎉 进行中活动</p>
+                            <template x-for="promo in memberInfo.active_promotions" :key="promo.id">
+                                <div class="notification is-warning is-light py-2 px-3 mb-2">
+                                    <p class="is-size-7"><strong x-text="promo.name"></strong> -
+                                        <span x-text="promoTypeText(promo.promotion_type)"></span>
+                                        <span class="tag is-success is-light is-small ml-1"><span x-text="promo.discount_rate"></span>%折</span>
+                                    </p>
+                                    <p class="is-size-7 has-text-grey" x-show="promo.end_time">截止：<span x-text="promo.end_time"></span></p>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
                     <div class="field">
                         <label class="label">选择手牌</label>
                         <div class="control">
@@ -77,10 +163,29 @@
                         </div>
                     </div>
                     <div class="field" x-show="selectedBand">
-                        <div class="notification is-info">
+                        <div class="notification" :class="memberInfo ? 'is-primary' : 'is-info'">
                             <p>手牌：<strong x-text="selectedBand.wristband_no"></strong></p>
-                            <p>基础费用：¥ <span x-text="selectedBand.base_price"></span></p>
-                            <p>押金金额：¥ <span x-text="selectedBand.deposit_amount"></span></p>
+                            <p>基础费用：
+                                <span x-show="!memberInfo">¥ <span x-text="selectedBand.base_price"></span></span>
+                                <template x-if="memberInfo">
+                                    <span>
+                                        <del class="has-text-grey-light">¥<span x-text="selectedBand.base_price"></span></del>
+                                        <span class="has-text-weight-bold ml-2">会员价 ¥<span x-text="discountedBaseFee"></span></span>
+                                        <span class="tag is-success is-light is-small ml-1">省¥<span x-text="baseFeeSave"></span></span>
+                                    </span>
+                                </template>
+                            </p>
+                            <p>押金金额：
+                                <span x-show="!memberInfo">¥ <span x-text="selectedBand.deposit_amount"></span></span>
+                                <template x-if="memberInfo">
+                                    <span>
+                                        <del class="has-text-grey-light">¥<span x-text="selectedBand.deposit_amount"></span></del>
+                                        <span class="has-text-weight-bold ml-2">实收押金 ¥<span x-text="discountedDeposit"></span></span>
+                                        <span class="tag is-success is-light is-small ml-1" x-show="depositSave > 0">减¥<span x-text="depositSave"></span></span>
+                                        <span class="tag is-warning is-light is-small ml-1" x-show="discountedDeposit == 0">押金全免</span>
+                                    </span>
+                                </template>
+                            </p>
                         </div>
                     </div>
                     <div class="field">
@@ -131,6 +236,15 @@
                 <p>顾客：<span x-text="result.customer_name"></span></p>
                 <p>电话：<span x-text="result.phone"></span></p>
                 <p>发牌时间：<span x-text="result.issue_time"></span></p>
+                <template x-if="result.member_info">
+                    <div class="notification is-primary mt-3">
+                        <p>🎖️ 会员：<strong x-text="result.member_info.member_no"></strong> (<span x-text="result.member_info.level_name"></span>)</p>
+                        <p>会员价基础费：¥<span x-text="parseFloat(result.member_info.discounted_base_fee||0).toFixed(2)"></span>
+                           (折扣率 <span x-text="result.member_info.discount_rate"></span>%)</p>
+                        <p>实收押金：¥<span x-text="parseFloat(result.member_info.actual_deposit||0).toFixed(2)"></span></p>
+                        <p>账户余额：¥<span x-text="parseFloat(result.member_info.balance||0).toFixed(2)"></span></p>
+                    </div>
+                </template>
             </div>
             <button class="button is-primary" @click="showResult=false; resetForm()">继续发牌</button>
         </div>
@@ -144,6 +258,8 @@ function issueApp() {
         availableBands: [],
         form: { bath_area_id: '', customer_name: '', phone: '', wristband_id: '' },
         phoneError: '',
+        phoneLookupLoading: false,
+        memberInfo: null,
         submitting: false,
         showResult: false,
         result: {},
@@ -154,20 +270,61 @@ function issueApp() {
         get selectedBand() {
             return this.availableBands.find(b => b.id == this.form.wristband_id);
         },
+        get discountedBaseFee() {
+            if (!this.selectedBand || !this.memberInfo) return '0.00';
+            const rate = parseFloat(this.memberInfo.discount_rate || 100);
+            return (parseFloat(this.selectedBand.base_price) * rate / 100).toFixed(2);
+        },
+        get baseFeeSave() {
+            if (!this.selectedBand || !this.memberInfo) return '0.00';
+            return (parseFloat(this.selectedBand.base_price) - parseFloat(this.discountedBaseFee)).toFixed(2);
+        },
+        get discountedDeposit() {
+            if (!this.selectedBand || !this.memberInfo) return '0.00';
+            const rate = parseFloat(this.memberInfo.deposit_discount_rate || 100);
+            return (parseFloat(this.selectedBand.deposit_amount) * rate / 100).toFixed(2);
+        },
+        get depositSave() {
+            if (!this.selectedBand || !this.memberInfo) return '0.00';
+            return (parseFloat(this.selectedBand.deposit_amount) - parseFloat(this.discountedDeposit)).toFixed(2);
+        },
+        pkgTypeText(t) { return {count:'次卡',time:'时段卡',combo:'套餐'}[t] || t; },
+        promoTypeText(t) { return {loss_fee:'遗失费折扣',reissue_fee:'补办费折扣',deposit:'押金减免',consume:'消费折扣'}[t] || t; },
         selectBand(b) { this.form.wristband_id = b.id; },
         async loadBands() {
             const qs = this.form.bath_area_id ? 'area_id=' + this.form.bath_area_id : '';
             const r = await fetch('/api/issue/available-bands?' + qs); const d = await r.json();
             if (d.success) { this.availableBands = d.data || []; }
         },
-        async checkPhone() {
+        async onPhoneBlur() {
             this.phoneError = '';
+            this.memberInfo = null;
             if (!this.form.phone) return;
-            const r = await fetch('/api/issue/check-phone?phone=' + encodeURIComponent(this.form.phone));
-            const d = await r.json();
-            if (!d.data.can_issue) {
+            const r1 = await fetch('/api/issue/check-phone?phone=' + encodeURIComponent(this.form.phone));
+            const d1 = await r1.json();
+            if (!d1.data.can_issue) {
                 this.phoneError = '该手机号存在未结清遗失记录，无法领牌';
+                return;
             }
+            await this.lookupMember();
+        },
+        async lookupMember() {
+            if (!this.form.phone) { this.memberInfo = null; return; }
+            this.phoneLookupLoading = true;
+            try {
+                const qs = 'phone=' + encodeURIComponent(this.form.phone);
+                const areaQS = this.form.bath_area_id ? '&bath_area_id=' + this.form.bath_area_id : '';
+                const r = await fetch('/api/members/lookup?' + qs + areaQS);
+                const d = await r.json();
+                if (d.success && d.data) {
+                    this.memberInfo = d.data;
+                    if (this.memberInfo.name && !this.form.customer_name) {
+                        this.form.customer_name = this.memberInfo.name;
+                    }
+                } else {
+                    this.memberInfo = null;
+                }
+            } finally { this.phoneLookupLoading = false; }
         },
         async submit() {
             if (!this.form.phone) { alert('请输入联系电话'); return; }
@@ -183,7 +340,7 @@ function issueApp() {
                 if (d.success) { this.result = d.data; this.showResult = true; }
             } finally { this.submitting = false; }
         },
-        resetForm() { this.form = { bath_area_id: this.form.bath_area_id, customer_name: '', phone: '', wristband_id: '' }; this.loadBands(); }
+        resetForm() { this.form = { bath_area_id: this.form.bath_area_id, customer_name: '', phone: '', wristband_id: '' }; this.memberInfo=null; this.phoneError=''; this.loadBands(); }
     };
 }
 </script>

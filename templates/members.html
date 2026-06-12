@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>会员管理</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.0/dist/cdn.min.js"></script>
+    <style>
+        body { background-color: #f5f5f5; min-height: 100vh; }
+        .navbar-brand-title { font-weight: 700; font-size: 1.2rem; }
+        .tag-active { background-color: #48c78e !important; }
+        .tag-disabled { background-color: #f14668 !important; }
+        .tab-content { display: none; }
+        .tab-content.is-active { display: block; }
+    </style>
+</head>
+<body style="background-color: #f5f5f5; min-height: 100vh;" x-data="memberApp()">
+<nav class="navbar is-primary" role="navigation">
+    <div class="navbar-brand">
+        <a class="navbar-item navbar-brand-title" href="/">🛁 澡堂手牌管理系统</a>
+    </div>
+    <div class="navbar-menu">
+        <div class="navbar-start">
+            <a class="navbar-item" href="/">首页</a>
+            <a class="navbar-item" href="/bath-areas">浴区管理</a>
+            <a class="navbar-item" href="/wristbands">手牌配置</a>
+            <a class="navbar-item" href="/issue">入场发牌</a>
+            <a class="navbar-item" href="/return">退牌结算</a>
+            <a class="navbar-item" href="/report-loss">遗失申报</a>
+            <a class="navbar-item" href="/reissue-review">补办审核</a>
+            <a class="navbar-item is-active" href="/members">会员管理</a>
+            <a class="navbar-item" href="/wristband-tracking">手牌追踪</a>
+            <a class="navbar-item" href="/warnings">预警中心</a>
+            <a class="navbar-item" href="/shift-summary">交接汇总</a>
+        </div>
+        <div class="navbar-end">
+            <div class="navbar-item">
+                <span class="mr-3">欢迎，{{user['full_name']}}</span>
+                <a class="button is-light" href="/logout">退出登录</a>
+            </div>
+        </div>
+    </div>
+</nav>
+<section class="section">
+    <div class="container">
+        <h1 class="title">会员管理</h1>
+
+        <div class="tabs is-boxed">
+            <ul>
+                <li :class="{'is-active': activeTab === 'members'}"><a @click="activeTab='members'">会员列表</a></li>
+                <li :class="{'is-active': activeTab === 'levels'}"><a @click="activeTab='levels'; loadLevels()">等级管理</a></li>
+                <li :class="{'is-active': activeTab === 'packages'}"><a @click="activeTab='packages'; loadAllPackages()">套餐管理</a></li>
+                <li :class="{'is-active': activeTab === 'promotions'}"><a @click="activeTab='promotions'; loadPromotions()">活动优惠</a></li>
+                <li :class="{'is-active': activeTab === 'bonus'}"><a @click="activeTab='bonus'; loadBonusRules()">充值赠送</a></li>
+                <li :class="{'is-active': activeTab === 'upgrade_logs'}"><a @click="activeTab='upgrade_logs'">等级日志</a></li>
+            </ul>
+        </div>
+
+        <div class="tab-content" :class="{'is-active': activeTab === 'members'}">
+            <div class="box">
+                <div class="columns">
+                    <div class="column is-4">
+                        <div class="field has-addons">
+                            <div class="control is-expanded">
+                                <input class="input" type="text" x-model="memberKeyword" @keyup.enter="loadMembers()" placeholder="姓名/手机号/会员号">
+                            </div>
+                            <div class="control">
+                                <button class="button is-primary" @click="loadMembers()">搜索</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="column is-3">
+                        <div class="select is-fullwidth">
+                            <select x-model="memberLevelFilter" @change="loadMembers()">
+                                <option value="">全部等级</option>
+                                <template x-for="l in levels" :key="l.id">
+                                    <option :value="l.id" x-text="l.name"></option>
+                                </template>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="column is-3">
+                        <div class="select is-fullwidth">
+                            <select x-model="memberStatusFilter" @change="loadMembers()">
+                                <option value="">全部状态</option>
+                                <option value="active">正常</option>
+                                <option value="disabled">停用</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="column is-2">
+                        <button class="button is-success is-fullwidth" @click="showAddMember=true">新增会员</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="box" style="overflow-x:auto;">
+                <table class="table is-fullwidth is-striped is-hoverable">
+                    <thead>
+                        <tr><th>会员号</th><th>姓名</th><th>手机号</th><th>等级</th><th>余额</th><th>赠送余额</th><th>累计充值</th><th>累计消费</th><th>状态</th><th>注册时间</th><th>操作</th></tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="m in members" :key="m.id">
+                            <tr>
+                                <td><strong x-text="m.member_no"></strong></td>
+                                <td x-text="m.name"></td>
+                                <td x-text="m.phone"></td>
+                                <td><span class="tag is-info is-light" x-text="m.level_name"></span></td>
+                                <td>¥ <span x-text="parseFloat(m.balance).toFixed(2)"></span></td>
+                                <td>¥ <span x-text="parseFloat(m.gift_balance||0).toFixed(2)"></span></td>
+                                <td>¥ <span x-text="parseFloat(m.total_top_up).toFixed(2)"></span></td>
+                                <td>¥ <span x-text="parseFloat(m.total_consumption).toFixed(2)"></span></td>
+                                <td><span class="tag" :class="m.status=='active'?'tag-active':'tag-disabled'" x-text="m.status=='active'?'正常':'停用'"></span></td>
+                                <td><small x-text="m.registered_at"></small></td>
+                                <td>
+                                    <button class="button is-small is-info" @click="viewMember(m)">详情</button>
+                                    <button class="button is-small is-success" @click="showTopUp(m)">充值</button>
+                                    <button class="button is-small is-warning" @click="showBuyPackage(m)">购套餐</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <p x-show="members.length == 0" class="has-text-grey">暂无会员数据</p>
+            </div>
+        </div>
+
+        <div class="tab-content" :class="{'is-active': activeTab === 'levels'}">
+            <div class="box">
+                <div class="level">
+                    <div class="level-left"><h2 class="subtitle mb-0">会员等级配置</h2></div>
+                    <div class="level-right"><button class="button is-success" @click="showAddLevel=true">新增等级</button></div>
+                </div>
+                <table class="table is-fullwidth is-striped">
+                    <thead><tr><th>等级名称</th><th>消费折扣%</th><th>押金折扣%</th><th>遗失费折扣%</th><th>补办费折扣%</th><th>最低充值</th><th>说明</th><th>操作</th></tr></thead>
+                    <tbody>
+                        <template x-for="l in allLevels" :key="l.id">
+                            <tr>
+                                <td x-text="l.name"></td>
+                                <td x-text="l.discount_rate"></td>
+                                <td x-text="l.deposit_discount_rate"></td>
+                                <td x-text="l.loss_fee_discount_rate"></td>
+                                <td x-text="l.reissue_fee_discount_rate"></td>
+                                <td>¥ <span x-text="parseFloat(l.min_top_up).toFixed(2)"></span></td>
+                                <td><small x-text="l.description"></small></td>
+                                <td><button class="button is-small is-info" @click="editLevel(l)">编辑</button></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="tab-content" :class="{'is-active': activeTab === 'packages'}">
+            <div class="box">
+                <div class="level">
+                    <div class="level-left"><h2 class="subtitle mb-0">消费套餐配置</h2></div>
+                    <div class="level-right"><button class="button is-success" @click="showAddPkg=true">新增套餐</button></div>
+                </div>
+                <table class="table is-fullwidth is-striped">
+                    <thead><tr><th>名称</th><th>类型</th><th>次数</th><th>有效天数</th><th>售价</th><th>原价值</th><th>状态</th><th>操作</th></tr></thead>
+                    <tbody>
+                        <template x-for="p in allPackages" :key="p.id">
+                            <tr>
+                                <td x-text="p.name"></td>
+                                <td><span class="tag is-info is-light" x-text="pkgTypeText(p.package_type)"></span></td>
+                                <td x-text="p.total_count || '不限'"></td>
+                                <td x-text="p.valid_days ? p.valid_days + '天' : '不限'"></td>
+                                <td>¥ <span x-text="parseFloat(p.price).toFixed(2)"></span></td>
+                                <td>¥ <span x-text="parseFloat(p.original_value).toFixed(2)"></span></td>
+                                <td><span class="tag" :class="p.is_active?'tag-active':'tag-disabled'" x-text="p.is_active?'上架':'下架'"></span></td>
+                                <td><button class="button is-small is-info" @click="editPkg(p)">编辑</button></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="tab-content" :class="{'is-active': activeTab === 'promotions'}">
+            <div class="box">
+                <div class="level">
+                    <div class="level-left"><h2 class="subtitle mb-0">活动优惠配置</h2></div>
+                    <div class="level-right"><button class="button is-success" @click="showAddPromo=true">新增活动</button></div>
+                </div>
+                <table class="table is-fullwidth is-striped">
+                    <thead><tr><th>名称</th><th>类型</th><th>折扣率%</th><th>适用等级</th><th>开始时间</th><th>结束时间</th><th>状态</th><th>操作</th></tr></thead>
+                    <tbody>
+                        <template x-for="p in promotions" :key="p.id">
+                            <tr>
+                                <td x-text="p.name"></td>
+                                <td><span class="tag is-info is-light" x-text="promoTypeText(p.promotion_type)"></span></td>
+                                <td x-text="p.discount_rate"></td>
+                                <td>
+                                    <template x-if="p.applicable_level_ids && p.applicable_level_ids.length > 0">
+                                        <span>
+                                            <template x-for="lid in p.applicable_level_ids" :key="lid">
+                                                <span class="tag is-light is-small mr-1" x-text="getLevelName(lid)"></span>
+                                            </template>
+                                        </span>
+                                    </template>
+                                    <span x-show="!p.applicable_level_ids || p.applicable_level_ids.length == 0" class="is-size-7 has-text-grey">全部等级</span>
+                                </td>
+                                <td><small x-text="formatPromoTime(p.start_time)"></small></td>
+                                <td><small x-text="formatPromoTime(p.end_time)"></small></td>
+                                <td>
+                                    <span class="tag" :class="isPromoActive(p) ? 'tag-active' : 'tag-disabled'" x-text="isPromoActive(p) ? '进行中' : '已结束'"></span>
+                                </td>
+                                <td><button class="button is-small is-info" @click="editPromo(p)">编辑</button></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <p x-show="promotions.length == 0" class="has-text-grey">暂无活动</p>
+            </div>
+        </div>
+        <div class="tab-content" :class="{'is-active': activeTab === 'bonus'}">
+            <div class="box">
+                <div class="level">
+                    <div class="level-left"><h2 class="subtitle mb-0">充值赠送规则</h2></div>
+                    <div class="level-right"><button class="button is-success" @click="bonusRuleForm = {id:null,name:'',min_amount:'',bonus_amount:'',bonus_percent:'',applicable_level_ids:[],priority:0,description:''}; showAddBonusRule=true">新增规则</button></div>
+                </div>
+                <table class="table is-fullwidth is-striped">
+                    <thead><tr><th>名称</th><th>最低充值</th><th>赠送金额</th><th>赠送比例%</th><th>适用等级</th><th>优先级</th><th>状态</th><th>操作</th></tr></thead>
+                    <tbody>
+                        <template x-for="r in allBonusRules" :key="r.id">
+                            <tr>
+                                <td x-text="r.name"></td>
+                                <td>¥ <span x-text="parseFloat(r.min_amount).toFixed(2)"></span></td>
+                                <td>¥ <span x-text="parseFloat(r.bonus_amount||0).toFixed(2)"></span></td>
+                                <td x-text="r.bonus_percent || '-'"></td>
+                                <td>
+                                    <template x-if="r.applicable_level_ids && r.applicable_level_ids.length > 0">
+                                        <span>
+                                            <template x-for="lid in r.applicable_level_ids" :key="lid">
+                                                <span class="tag is-light is-small mr-1" x-text="getLevelName(lid)"></span>
+                                            </template>
+                                        </span>
+                                    </template>
+                                    <span x-show="!r.applicable_level_ids || r.applicable_level_ids.length == 0" class="is-size-7 has-text-grey">全部等级</span>
+                                </td>
+                                <td x-text="r.priority"></td>
+                                <td><span class="tag" :class="r.is_active ? 'tag-active' : 'tag-disabled'" x-text="r.is_active ? '启用' : '停用'"></span></td>
+                                <td><button class="button is-small is-info" @click="editBonusRule(r)">编辑</button></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <p x-show="allBonusRules.length == 0" class="has-text-grey">暂无赠送规则</p>
+            </div>
+        </div>
+        <div class="tab-content" :class="{'is-active': activeTab === 'upgrade_logs'}">
+            <div class="box">
+                <h2 class="subtitle">等级升级日志</h2>
+                <div class="columns">
+                    <div class="column is-4">
+                        <div class="field has-addons">
+                            <div class="control is-expanded">
+                                <input class="input" type="text" x-model="upgradeLogKeyword" @keyup.enter="loadUpgradeLogs()" placeholder="姓名/手机号/会员号">
+                            </div>
+                            <div class="control">
+                                <button class="button is-primary" @click="loadUpgradeLogs()">搜索</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <table class="table is-fullwidth is-striped is-narrow" x-show="upgradeLogs.length > 0">
+                    <thead><tr><th>时间</th><th>会员</th><th>原等级</th><th>新等级</th><th>触发方式</th><th>操作人</th><th>备注</th></tr></thead>
+                    <tbody>
+                        <template x-for="log in upgradeLogs" :key="log.id">
+                            <tr>
+                                <td><small x-text="log.created_at"></small></td>
+                                <td x-text="log.member_name || log.member_id"></td>
+                                <td x-text="log.old_level_name || log.old_level_id"></td>
+                                <td x-text="log.new_level_name || log.new_level_id"></td>
+                                <td><span class="tag is-light is-small" x-text="log.trigger_type == 'auto_topup' ? '自动升级' : '手动调整'"></span></td>
+                                <td x-text="log.operator_name || '-'"></td>
+                                <td><small x-text="log.remark"></small></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <p x-show="upgradeLogs.length == 0" class="has-text-grey">暂无升级日志</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="modal" :class="{'is-active': showAddMember}">
+    <div class="modal-background" @click="showAddMember=false"></div>
+    <div class="modal-card">
+        <header class="modal-card-head"><p class="modal-card-title">新增会员</p><button class="delete" @click="showAddMember=false"></button></header>
+        <section class="modal-card-body">
+            <div class="field"><label class="label">姓名</label><div class="control"><input class="input" x-model="memberForm.name" placeholder="请输入姓名"></div></div>
+            <div class="field"><label class="label">手机号 <span class="has-text-danger">*</span></label><div class="control"><input class="input" x-model="memberForm.phone" placeholder="请输入手机号"></div></div>
+            <div class="field"><label class="label">性别</label><div class="control">
+                <div class="select is-fullwidth"><select x-model="memberForm.gender"><option value="">未选择</option><option value="男">男</option><option value="女">女</option></select></div>
+            </div></div>
+            <div class="field"><label class="label">身份证号</label><div class="control"><input class="input" x-model="memberForm.id_card" placeholder="选填"></div></div>
+            <div class="field"><label class="label">会员等级</label><div class="control">
+                <div class="select is-fullwidth"><select x-model="memberForm.level_id"><template x-for="l in levels" :key="l.id"><option :value="l.id" x-text="l.name"></option></template></select></div>
+            </div></div>
+            <div class="field"><label class="label">备注</label><div class="control"><input class="input" x-model="memberForm.remark" placeholder="选填"></div></div>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button is-success" @click="createMember()">确认注册</button>
+            <button class="button" @click="showAddMember=false">取消</button>
+        </footer>
+    </div>
+</div>
+
+<div class="modal" :class="{'is-active': showTopUpModal}">
+    <div class="modal-background" @click="showTopUpModal=false"></div>
+    <div class="modal-card">
+        <header class="modal-card-head"><p class="modal-card-title">会员充值</p><button class="delete" @click="showTopUpModal=false"></button></header>
+        <section class="modal-card-body" x-show="currentMember">
+            <p>会员：<strong x-text="currentMember?.name"></strong> (<span x-text="currentMember?.member_no"></span>)</p>
+            <p>当前余额：¥ <span x-text="parseFloat(currentMember?.balance||0).toFixed(2)"></span> | 赠送余额：¥ <span x-text="parseFloat(currentMember?.gift_balance||0).toFixed(2)"></span></p>
+            <hr>
+            <div class="field"><label class="label">充值金额 (元)</label><div class="control"><input class="input" type="number" step="0.01" x-model="topUpForm.amount" min="0.01"></div></div>
+            <div class="field"><label class="label">手动赠送金额 (元)</label><div class="control"><input class="input" type="number" step="0.01" x-model="topUpForm.gift_amount" min="0" placeholder="0"></div></div>
+            <div class="field"><label class="label">备注</label><div class="control"><input class="input" x-model="topUpForm.remark" placeholder="选填"></div></div>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button is-success" @click="doTopUp()">确认充值</button>
+            <button class="button" @click="showTopUpModal=false">取消</button>
+        </footer>
+    </div>
+</div>
+
+<div class="modal" :class="{'is-active': showBuyPkgModal}">
+    <div class="modal-background" @click="showBuyPkgModal=false"></div>
+    <div class="modal-card">
+        <header class="modal-card-head"><p class="modal-card-title">购买套餐</p><button class="delete" @click="showBuyPkgModal=false"></button></header>
+        <section class="modal-card-body" x-show="currentMember">
+            <p>会员：<strong x-text="currentMember?.name"></strong> (余额: ¥<span x-text="parseFloat(currentMember?.balance||0).toFixed(2)"></span>)</p>
+            <hr>
+            <div class="field"><label class="label">选择套餐</label><div class="control">
+                <div class="select is-fullwidth"><select x-model="buyPkgForm.package_id"><option value="">请选择</option><template x-for="p in packages" :key="p.id"><option :value="p.id" x-text="p.name + ' - ¥' + parseFloat(p.price).toFixed(2) + ' (价值¥' + parseFloat(p.original_value).toFixed(2) + ')'"></option></template></select></div>
+            </div></div>
+            <div class="field"><label class="label">支付方式</label><div class="control">
+                <label class="radio"><input type="radio" value="cash" x-model="buyPkgForm.pay_method"> 现金支付</label>
+                <label class="radio"><input type="radio" value="balance" x-model="buyPkgForm.pay_method"> 余额支付</label>
+            </div></div>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button is-success" @click="doBuyPackage()">确认购买</button>
+            <button class="button" @click="showBuyPkgModal=false">取消</button>
+        </footer>
+    </div>
+</div>
+
+<div class="modal" :class="{'is-active': showDetailModal}">
+    <div class="modal-background" @click="showDetailModal=false"></div>
+    <div class="modal-card" style="width:800px;max-width:95vw;">
+        <header class="modal-card-head"><p class="modal-card-title">会员详情</p><button class="delete" @click="showDetailModal=false"></button></header>
+        <section class="modal-card-body" x-show="currentMember">
+            <div class="columns">
+                <div class="column is-6">
+                    <div class="box">
+                        <h3 class="subtitle is-5">基本信息</h3>
+                        <p>会员号：<strong x-text="currentMember?.member_no"></strong></p>
+                        <p>姓名：<span x-text="currentMember?.name"></span></p>
+                        <p>手机：<span x-text="currentMember?.phone"></span></p>
+                        <p>等级：<span class="tag is-info is-light" x-text="currentMember?.level_name"></span>
+                            <button class="button is-small is-warning ml-2" @click="showUpgradeModal=true">调整等级</button>
+                        </p>
+                        <p>余额：¥ <span x-text="parseFloat(currentMember?.balance||0).toFixed(2)"></span></p>
+                        <p>赠送余额：¥ <span x-text="parseFloat(currentMember?.gift_balance||0).toFixed(2)"></span></p>
+                        <p>累计充值：¥ <span x-text="parseFloat(currentMember?.total_top_up||0).toFixed(2)"></span></p>
+                        <p>累计消费：¥ <span x-text="parseFloat(currentMember?.total_consumption||0).toFixed(2)"></span></p>
+                        <p x-show="currentMember?.next_level" class="has-text-info is-size-7">
+                            下一等级：<span x-text="currentMember?.next_level?.name"></span>
+                            (还需充值 ¥<span x-text="currentMember?.next_level?.gap?.toFixed(2)"></span>)
+                        </p>
+                    </div>
+                </div>
+                <div class="column is-6">
+                    <div class="box">
+                        <h3 class="subtitle is-5">已购套餐</h3>
+                        <template x-for="pkg in memberPackages" :key="pkg.id">
+                            <div class="mb-3 p-3" style="border:1px solid #dbdbdb;border-radius:6px;">
+                                <p><strong x-text="pkg.package_name"></strong>
+                                    <span class="tag is-info is-light ml-2" x-text="pkgTypeText(pkg.package_type)"></span>
+                                    <span class="tag ml-2" :class="pkg.status=='active'?'tag-active':'tag-disabled'" x-text="pkg.status=='active'?'有效':'已用完'"></span>
+                                </p>
+                                <p class="is-size-7">剩余次数：<span x-text="pkg.remaining_count !== null ? pkg.remaining_count : '不限'"></span>
+                                   | 到期：<span x-text="pkg.expire_at || '不限'"></span></p>
+                            </div>
+                        </template>
+                        <p x-show="memberPackages.length == 0" class="has-text-grey is-size-7">暂无已购套餐</p>
+                    </div>
+                </div>
+            </div>
+            <div class="box">
+                <h3 class="subtitle is-5">交易记录</h3>
+                <table class="table is-fullwidth is-striped is-narrow">
+                    <thead><tr><th>时间</th><th>类型</th><th>金额</th><th>余额</th><th>备注</th></tr></thead>
+                    <tbody>
+                        <template x-for="t in memberTransactions" :key="t.id">
+                            <tr>
+                                <td><small x-text="t.created_at"></small></td>
+                                <td><span class="tag is-small" x-text="txnTypeText(t.transaction_type)"></span></td>
+                                <td x-text="parseFloat(t.amount).toFixed(2)"></td>
+                                <td x-text="parseFloat(t.balance_after).toFixed(2)"></td>
+                                <td><small x-text="t.remark"></small></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <p x-show="memberTransactions.length == 0" class="has-text-grey is-size-7">暂无交易记录</p>
+            </div>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button" @click="showDetailModal=false">关闭</button>
+        </footer>
+    </div>
+</div>
+
+<div class="modal" :class="{'is-active': showAddLevel}">
+    <div class="modal-background" @click="showAddLevel=false"></div>
+    <div class="modal-card">
+        <header class="modal-card-head"><p class="modal-card-title" x-text="levelForm.id ? '编辑等级' : '新增等级'"></p><button class="delete" @click="showAddLevel=false"></button></header>
+        <section class="modal-card-body">
+            <div class="field"><label class="label">等级名称</label><div class="control"><input class="input" x-model="levelForm.name" placeholder="如：金卡会员"></div></div>
+            <div class="field"><label class="label">消费折扣率 (%) <span class="help">100=无折扣, 90=9折</span></label><div class="control"><input class="input" type="number" step="1" x-model="levelForm.discount_rate"></div></div>
+            <div class="field"><label class="label">押金折扣率 (%)</label><div class="control"><input class="input" type="number" step="1" x-model="levelForm.deposit_discount_rate"></div></div>
+            <div class="field"><label class="label">遗失费折扣率 (%)</label><div class="control"><input class="input" type="number" step="1" x-model="levelForm.loss_fee_discount_rate"></div></div>
+            <div class="field"><label class="label">补办费折扣率 (%)</label><div class="control"><input class="input" type="number" step="1" x-model="levelForm.reissue_fee_discount_rate"></div></div>
+            <div class="field"><label class="label">最低充值金额 (元)</label><div class="control"><input class="input" type="number" step="0.01" x-model="levelForm.min_top_up"></div></div>
+            <div class="field"><label class="label">说明</label><div class="control"><input class="input" x-model="levelForm.description" placeholder="等级说明"></div></div>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button is-success" @click="saveLevel()">保存</button>
+            <button class="button" @click="showAddLevel=false">取消</button>
+        </footer>
+    </div>
+</div>
+
+<div class="modal" :class="{'is-active': showAddPkg}">
+    <div class="modal-background" @click="showAddPkg=false"></div>
+    <div class="modal-card">
+        <header class="modal-card-head"><p class="modal-card-title" x-text="pkgForm.id ? '编辑套餐' : '新增套餐'"></p><button class="delete" @click="showAddPkg=false"></button></header>
+        <section class="modal-card-body">
+            <div class="field"><label class="label">套餐名称</label><div class="control"><input class="input" x-model="pkgForm.name" placeholder="如：10次卡"></div></div>
+            <div class="field"><label class="label">套餐类型</label><div class="control">
+                <div class="select is-fullwidth"><select x-model="pkgForm.package_type">
+                    <option value="count">次卡</option><option value="time">时段卡</option><option value="combo">套餐</option>
+                </select></div>
+            </div></div>
+            <div class="field"><label class="label">总次数 (次卡/套餐必填)</label><div class="control"><input class="input" type="number" x-model="pkgForm.total_count" placeholder="留空则不限次"></div></div>
+            <div class="field"><label class="label">有效天数</label><div class="control"><input class="input" type="number" x-model="pkgForm.valid_days" placeholder="留空则永久有效"></div></div>
+            <div class="field"><label class="label">售价 (元)</label><div class="control"><input class="input" type="number" step="0.01" x-model="pkgForm.price"></div></div>
+            <div class="field"><label class="label">原价值 (元)</label><div class="control"><input class="input" type="number" step="0.01" x-model="pkgForm.original_value"></div></div>
+            <div class="field"><label class="label">适用浴区</label><div class="control">
+                <template x-for="a in areas" :key="a.id">
+                    <label class="checkbox mr-3"><input type="checkbox" :value="a.id" @change="toggleAreaId(a.id)" :checked="pkgForm.applicable_bath_area_ids.includes(a.id)"><span x-text="a.name" class="ml-1"></span></label>
+                </template>
+                <p class="help">不选则适用所有浴区</p>
+            </div></div>
+            <div class="field"><label class="label">说明</label><div class="control"><input class="input" x-model="pkgForm.description" placeholder="套餐说明"></div></div>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button is-success" @click="savePackage()">保存</button>
+            <button class="button" @click="showAddPkg=false">取消</button>
+        </footer>
+    </div>
+</div>
+
+<div class="modal" :class="{'is-active': showAddPromo}">
+    <div class="modal-background" @click="showAddPromo=false"></div>
+    <div class="modal-card">
+        <header class="modal-card-head"><p class="modal-card-title" x-text="promoForm.id ? '编辑活动' : '新增活动'"></p><button class="delete" @click="showAddPromo=false"></button></header>
+        <section class="modal-card-body">
+            <div class="field"><label class="label">活动名称</label><div class="control"><input class="input" x-model="promoForm.name" placeholder="如：五一遗失费减免"></div></div>
+            <div class="field"><label class="label">优惠类型</label><div class="control">
+                <div class="select is-fullwidth"><select x-model="promoForm.promotion_type">
+                    <option value="loss_fee">遗失费折扣</option><option value="reissue_fee">补办费折扣</option><option value="deposit">押金减免</option><option value="consume">消费折扣</option>
+                </select></div>
+            </div></div>
+            <div class="field"><label class="label">折扣率 (%) <span class="help">100=无折扣, 50=5折, 0=全免</span></label><div class="control"><input class="input" type="number" step="1" x-model="promoForm.discount_rate"></div></div>
+            <div class="field"><label class="label">适用等级（不选则全部等级）</label><div class="control">
+                <template x-for="l in allLevels" :key="l.id">
+                    <label class="checkbox mr-3"><input type="checkbox" :value="l.id" @change="togglePromoLevelId(l.id)" :checked="promoForm.applicable_level_ids.includes(l.id)"><span x-text="l.name" class="ml-1"></span></label>
+                </template>
+            </div></div>
+            <div class="field"><label class="label">开始时间</label><div class="control"><input class="input" type="datetime-local" x-model="promoForm.start_time"></div></div>
+            <div class="field"><label class="label">结束时间</label><div class="control"><input class="input" type="datetime-local" x-model="promoForm.end_time"></div></div>
+            <div class="field"><label class="label">说明</label><div class="control"><input class="input" x-model="promoForm.description" placeholder="活动说明"></div></div>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button is-success" @click="savePromotion()">保存</button>
+            <button class="button" @click="showAddPromo=false">取消</button>
+        </footer>
+    </div>
+</div>
+
+<div class="modal" :class="{'is-active': showAddBonusRule}">
+    <div class="modal-background" @click="showAddBonusRule=false"></div>
+    <div class="modal-card">
+        <header class="modal-card-head"><p class="modal-card-title" x-text="bonusRuleForm.id ? '编辑赠送规则' : '新增赠送规则'"></p><button class="delete" @click="showAddBonusRule=false"></button></header>
+        <section class="modal-card-body">
+            <div class="field"><label class="label">规则名称</label><div class="control"><input class="input" x-model="bonusRuleForm.name" placeholder="如：充100送10"></div></div>
+            <div class="field"><label class="label">最低充值金额 (元)</label><div class="control"><input class="input" type="number" step="0.01" x-model="bonusRuleForm.min_amount"></div></div>
+            <div class="field"><label class="label">赠送金额 (元)</label><div class="control"><input class="input" type="number" step="0.01" x-model="bonusRuleForm.bonus_amount"></div></div>
+            <div class="field"><label class="label">赠送比例 (%) <span class="help">按充值金额的百分比额外赠送</span></label><div class="control"><input class="input" type="number" step="0.01" x-model="bonusRuleForm.bonus_percent"></div></div>
+            <div class="field"><label class="label">适用等级（不选则全部等级）</label><div class="control">
+                <template x-for="l in allLevels" :key="l.id">
+                    <label class="checkbox mr-3"><input type="checkbox" :value="l.id" @change="toggleBonusLevelId(l.id)" :checked="bonusRuleForm.applicable_level_ids.includes(l.id)"><span x-text="l.name" class="ml-1"></span></label>
+                </template>
+            </div></div>
+            <div class="field"><label class="label">优先级 <span class="help">数值越大优先级越高</span></label><div class="control"><input class="input" type="number" step="1" x-model="bonusRuleForm.priority"></div></div>
+            <div class="field"><label class="label">状态</label><div class="control">
+                <div class="select is-fullwidth"><select x-model="bonusRuleForm.is_active"><option :value="true">启用</option><option :value="false">停用</option></select></div>
+            </div></div>
+            <div class="field"><label class="label">说明</label><div class="control"><input class="input" x-model="bonusRuleForm.description" placeholder="规则说明"></div></div>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button is-success" @click="saveBonusRule()">保存</button>
+            <button class="button" @click="showAddBonusRule=false">取消</button>
+        </footer>
+    </div>
+</div>
+
+<div class="modal" :class="{'is-active': showUpgradeModal}">
+    <div class="modal-background" @click="showUpgradeModal=false"></div>
+    <div class="modal-card">
+        <header class="modal-card-head"><p class="modal-card-title">调整会员等级</p><button class="delete" @click="showUpgradeModal=false"></button></header>
+        <section class="modal-card-body" x-show="currentMember">
+            <p>当前会员：<strong x-text="currentMember?.name"></strong> 当前等级：<span class="tag is-info is-light" x-text="currentMember?.level_name"></span></p>
+            <hr>
+            <div class="field"><label class="label">选择新等级</label><div class="control">
+                <div class="select is-fullwidth"><select x-model="upgradeForm.new_level_id">
+                    <option value="">请选择</option>
+                    <template x-for="l in allLevels" :key="l.id">
+                        <option :value="l.id" x-text="l.name" :disabled="l.id == currentMember?.level_id"></option>
+                    </template>
+                </select></div>
+            </div></div>
+            <div class="field"><label class="label">备注</label><div class="control"><input class="input" x-model="upgradeForm.remark" placeholder="调整原因（选填）"></div></div>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button is-success" @click="doManualUpgrade()">确认调整</button>
+            <button class="button" @click="showUpgradeModal=false">取消</button>
+        </footer>
+    </div>
+</div>
+
+<script>
+function memberApp() {
+    return {
+        activeTab: 'members',
+        members: [],
+        levels: [],
+        packages: [],
+        allLevels: [],
+        allPackages: [],
+        promotions: [],
+        areas: [],
+        memberKeyword: '',
+        memberLevelFilter: '',
+        memberStatusFilter: '',
+        showAddMember: false,
+        showTopUpModal: false,
+        showBuyPkgModal: false,
+        showDetailModal: false,
+        showAddLevel: false,
+        showAddPkg: false,
+        showAddPromo: false,
+        showAddBonusRule: false,
+        showUpgradeModal: false,
+        currentMember: null,
+        memberPackages: [],
+        memberTransactions: [],
+        upgradeLogs: [],
+        upgradeLogKeyword: '',
+        memberForm: { name: '', phone: '', gender: '', id_card: '', level_id: 1, remark: '' },
+        topUpForm: { amount: '', gift_amount: '', remark: '' },
+        buyPkgForm: { package_id: '', pay_method: 'cash' },
+        upgradeForm: { new_level_id: '', remark: '' },
+        levelForm: { id: null, name: '', discount_rate: 100, deposit_discount_rate: 100, loss_fee_discount_rate: 100, reissue_fee_discount_rate: 100, min_top_up: 0, description: '' },
+        pkgForm: { id: null, name: '', package_type: 'count', total_count: '', valid_days: '', price: '', original_value: '', applicable_bath_area_ids: [], description: '' },
+        promoForm: { id: null, name: '', promotion_type: 'loss_fee', discount_rate: 100, applicable_level_ids: [], start_time: '', end_time: '', description: '' },
+        bonusRuleForm: { id: null, name: '', min_amount: '', bonus_amount: '', bonus_percent: '', applicable_level_ids: [], priority: 0, description: '' },
+        async init() {
+            this.areas = {{!areas_json}};
+            this.packages = {{!packages_json}};
+            this.levels = {{!levels_json}};
+            this.bonusRules = {{!bonus_rules_json}};
+            this.allBonusRules = this.bonusRules || [];
+            await this.loadMembers();
+        },
+        async loadMembers() {
+            const params = new URLSearchParams();
+            if (this.memberKeyword) params.set('keyword', this.memberKeyword);
+            if (this.memberLevelFilter) params.set('level_id', this.memberLevelFilter);
+            if (this.memberStatusFilter) params.set('status', this.memberStatusFilter);
+            const r = await fetch('/api/members?' + params.toString());
+            const d = await r.json();
+            if (d.success) this.members = d.data || [];
+        },
+        async loadLevels() {
+            const r = await fetch('/api/member-levels');
+            const d = await r.json();
+            if (d.success) this.allLevels = d.data || [];
+        },
+        async loadAllPackages() {
+            const r = await fetch('/api/member-packages');
+            const d = await r.json();
+            if (d.success) this.allPackages = d.data || [];
+        },
+        async createMember() {
+            if (!this.memberForm.phone) { alert('请输入手机号'); return; }
+            const r = await fetch('/api/members', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(this.memberForm)
+            });
+            const d = await r.json(); alert(d.message);
+            if (d.success) { this.showAddMember = false; this.memberForm = {name:'',phone:'',gender:'',id_card:'',level_id:1,remark:''}; await this.loadMembers(); }
+        },
+        showTopUp(m) { this.currentMember = m; this.topUpForm = {amount:'',gift_amount:'',remark:''}; this.showTopUpModal = true; },
+        async doTopUp() {
+            if (!this.topUpForm.amount || parseFloat(this.topUpForm.amount) <= 0) { alert('请输入充值金额'); return; }
+            const r = await fetch(`/api/members/${this.currentMember.id}/topup`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(this.topUpForm)
+            });
+            const d = await r.json();
+            let msg = d.message;
+            if (d.success && d.data) {
+                if (d.data.bonus > 0) msg += `\n赠送金额: ¥${parseFloat(d.data.bonus).toFixed(2)}`;
+                if (d.data.upgraded) msg += `\n已自动升级为: ${d.data.new_level_name || '新等级'}`;
+            }
+            alert(msg);
+            if (d.success) { this.showTopUpModal = false; await this.loadMembers(); }
+        },
+        showBuyPackage(m) { this.currentMember = m; this.buyPkgForm = {package_id:'',pay_method:'cash'}; this.showBuyPkgModal = true; },
+        async doBuyPackage() {
+            if (!this.buyPkgForm.package_id) { alert('请选择套餐'); return; }
+            const r = await fetch(`/api/members/${this.currentMember.id}/purchase-package`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(this.buyPkgForm)
+            });
+            const d = await r.json(); alert(d.message);
+            if (d.success) { this.showBuyPkgModal = false; await this.loadMembers(); }
+        },
+        async viewMember(m) {
+            this.currentMember = m;
+            this.showDetailModal = true;
+            const [pkgRes, txnRes, detailRes] = await Promise.all([
+                fetch(`/api/members/${m.id}/packages`).then(r=>r.json()),
+                fetch(`/api/members/${m.id}/transactions?limit=30`).then(r=>r.json()),
+                fetch(`/api/members/lookup?phone=${encodeURIComponent(m.phone||'')}`).then(r=>r.json()).catch(()=>null)
+            ]);
+            if (pkgRes.success) this.memberPackages = pkgRes.data || [];
+            if (txnRes.success) this.memberTransactions = txnRes.data || [];
+            if (detailRes && detailRes.success && detailRes.data) {
+                this.currentMember = {...this.currentMember, gift_balance: detailRes.data.gift_balance, next_level: detailRes.data.next_level};
+            }
+        },
+        editLevel(l) { this.levelForm = {...l}; this.showAddLevel = true; },
+        async saveLevel() {
+            const url = this.levelForm.id ? `/api/member-levels/${this.levelForm.id}` : '/api/member-levels';
+            const method = this.levelForm.id ? 'PUT' : 'POST';
+            const r = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.levelForm) });
+            const d = await r.json(); alert(d.message);
+            if (d.success) { this.showAddLevel = false; this.levelForm = {id:null,name:'',discount_rate:100,deposit_discount_rate:100,loss_fee_discount_rate:100,reissue_fee_discount_rate:100,min_top_up:0,description:''}; await this.loadLevels(); }
+        },
+        editPkg(p) {
+            this.pkgForm = {...p, applicable_bath_area_ids: p.applicable_bath_area_ids || [], total_count: p.total_count || '', valid_days: p.valid_days || ''};
+            this.showAddPkg = true;
+        },
+        toggleAreaId(id) {
+            const idx = this.pkgForm.applicable_bath_area_ids.indexOf(id);
+            if (idx >= 0) this.pkgForm.applicable_bath_area_ids.splice(idx, 1);
+            else this.pkgForm.applicable_bath_area_ids.push(id);
+        },
+        async savePackage() {
+            const url = this.pkgForm.id ? `/api/member-packages/${this.pkgForm.id}` : '/api/member-packages';
+            const method = this.pkgForm.id ? 'PUT' : 'POST';
+            const r = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.pkgForm) });
+            const d = await r.json(); alert(d.message);
+            if (d.success) { this.showAddPkg = false; this.pkgForm = {id:null,name:'',package_type:'count',total_count:'',valid_days:'',price:'',original_value:'',applicable_bath_area_ids:[],description:''}; await this.loadAllPackages(); }
+        },
+        pkgTypeText(t) { return {count:'次卡',time:'时段卡',combo:'套餐'}[t] || t; },
+        txnTypeText(t) {
+            const m = {register:'注册',topup:'充值',consumption:'消费扣减',package_deduction:'套餐核销',package_purchase:'余额购套餐',package_purchase_cash:'现金购套餐',package_activate:'激活套餐',gift_bonus:'赠送金额'};
+            return m[t] || t;
+        },
+        promoTypeText(t) { return {loss_fee:'遗失费折扣',reissue_fee:'补办费折扣',deposit:'押金减免',consume:'消费折扣'}[t] || t; },
+        getLevelName(id) {
+            const l = this.allLevels.find(x => x.id == id);
+            return l ? l.name : '等级' + id;
+        },
+        formatPromoTime(t) {
+            if (!t) return '';
+            const d = new Date(t);
+            return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+                + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+        },
+        isPromoActive(p) {
+            if (!p.is_active) return false;
+            const now = new Date();
+            return new Date(p.start_time) <= now && new Date(p.end_time) >= now;
+        },
+        async loadPromotions() {
+            const r = await fetch('/api/promotions');
+            const d = await r.json();
+            if (d.success) this.promotions = d.data || [];
+            if (this.allLevels.length == 0) await this.loadLevels();
+        },
+        editPromo(p) {
+            this.promoForm = {...p, applicable_level_ids: p.applicable_level_ids || []};
+            this.showAddPromo = true;
+        },
+        togglePromoLevelId(id) {
+            const idx = this.promoForm.applicable_level_ids.indexOf(id);
+            if (idx >= 0) this.promoForm.applicable_level_ids.splice(idx, 1);
+            else this.promoForm.applicable_level_ids.push(id);
+        },
+        async savePromotion() {
+            const url = this.promoForm.id ? `/api/promotions/${this.promoForm.id}` : '/api/promotions';
+            const method = this.promoForm.id ? 'PUT' : 'POST';
+            const r = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.promoForm) });
+            const d = await r.json(); alert(d.message);
+            if (d.success) { this.showAddPromo = false; this.promoForm = {id:null,name:'',promotion_type:'loss_fee',discount_rate:100,applicable_level_ids:[],start_time:'',end_time:'',description:''}; await this.loadPromotions(); }
+        },
+        async loadBonusRules() {
+            const r = await fetch('/api/topup-bonus-rules');
+            const d = await r.json();
+            if (d.success) this.allBonusRules = d.data || [];
+            if (this.allLevels.length == 0) await this.loadLevels();
+        },
+        editBonusRule(r) {
+            this.bonusRuleForm = {...r, applicable_level_ids: r.applicable_level_ids || [], is_active: r.is_active !== false};
+            this.showAddBonusRule = true;
+        },
+        toggleBonusLevelId(id) {
+            const idx = this.bonusRuleForm.applicable_level_ids.indexOf(id);
+            if (idx >= 0) this.bonusRuleForm.applicable_level_ids.splice(idx, 1);
+            else this.bonusRuleForm.applicable_level_ids.push(id);
+        },
+        async saveBonusRule() {
+            const url = this.bonusRuleForm.id ? `/api/topup-bonus-rules/${this.bonusRuleForm.id}` : '/api/topup-bonus-rules';
+            const method = this.bonusRuleForm.id ? 'PUT' : 'POST';
+            const r = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.bonusRuleForm) });
+            const d = await r.json(); alert(d.message);
+            if (d.success) { this.showAddBonusRule = false; this.bonusRuleForm = {id:null,name:'',min_amount:'',bonus_amount:'',bonus_percent:'',applicable_level_ids:[],priority:0,description:''}; await this.loadBonusRules(); }
+        },
+        async loadUpgradeLogs() {
+            if (!this.upgradeLogKeyword) { alert('请输入搜索关键词'); return; }
+            const params = new URLSearchParams({keyword: this.upgradeLogKeyword});
+            const r = await fetch('/api/members?' + params.toString());
+            const d = await r.json();
+            if (d.success && d.data && d.data.length > 0) {
+                const m = d.data[0];
+                const logRes = await fetch(`/api/members/${m.id}/upgrade-logs`);
+                const logData = await logRes.json();
+                if (logData.success) this.upgradeLogs = (logData.data || []).map(log => ({...log, member_name: m.name}));
+            } else {
+                this.upgradeLogs = [];
+            }
+        },
+        async doManualUpgrade() {
+            if (!this.upgradeForm.new_level_id) { alert('请选择新等级'); return; }
+            const r = await fetch(`/api/members/${this.currentMember.id}/manual-upgrade`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(this.upgradeForm)
+            });
+            const d = await r.json(); alert(d.message);
+            if (d.success) {
+                this.showUpgradeModal = false;
+                this.upgradeForm = {new_level_id:'', remark:''};
+                await this.loadMembers();
+                if (this.currentMember) {
+                    const detailRes = await fetch(`/api/members/lookup?phone=${encodeURIComponent(this.currentMember.phone||'')}`).then(r=>r.json()).catch(()=>null);
+                    if (detailRes && detailRes.success && detailRes.data) {
+                        this.currentMember = {...this.currentMember, level_name: detailRes.data.level_name, level_id: detailRes.data.level_id, next_level: detailRes.data.next_level};
+                    }
+                }
+            }
+        }
+    };
+}
+</script>
+</body>
+</html>
