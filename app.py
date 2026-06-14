@@ -444,6 +444,10 @@ def run_all_warning_checks():
         check_topup_anomaly()
     except Exception:
         pass
+    try:
+        check_cross_store_discount_anomaly()
+    except Exception:
+        pass
 
 
 def get_unread_warning_stats():
@@ -593,6 +597,27 @@ def index():
     }
     warning_stats = get_unread_warning_stats()
     recent_warnings = []
+    cross_store_stats = {'today_local_income': 0.0, 'today_cross_income': 0.0, 'today_cross_deduction': 0.0, 'pending_clearing': 0.0}
+    try:
+        current_store_id = get_current_store_id(user)
+        if current_store_id:
+            today_cs = date.today().strftime('%Y-%m-%d')
+            li = query_one('''SELECT COALESCE(SUM(base_fee + extra_fee + loss_fee + reissue_fee), 0) as total
+                              FROM issue_records WHERE store_id = %s AND fee_status = 'settled' AND DATE(issue_time) = %s''', (current_store_id, today_cs))
+            ci = query_one('''SELECT COALESCE(SUM(amount), 0) as total FROM clearing_records
+                              WHERE store_id = %s AND amount_type = 'target_income' AND status = 'settled' AND DATE(settled_at) = %s''', (current_store_id, today_cs))
+            cd = query_one('''SELECT COALESCE(SUM(deduction_amount), 0) as total FROM cross_store_records
+                              WHERE consume_store_id = %s AND DATE(created_at) = %s''', (current_store_id, today_cs))
+            pc = query_one('''SELECT COALESCE(SUM(amount), 0) as total FROM clearing_records
+                              WHERE store_id = %s AND status = 'pending' ''', (current_store_id,))
+            cross_store_stats = {
+                'today_local_income': float(li['total']) if li else 0.0,
+                'today_cross_income': float(ci['total']) if ci else 0.0,
+                'today_cross_deduction': float(cd['total']) if cd else 0.0,
+                'pending_clearing': float(pc['total']) if pc else 0.0,
+            }
+    except Exception:
+        pass
     try:
         rows = query('''
             SELECT w.*, u1.full_name as read_by_name, u2.full_name as resolved_by_name,
@@ -613,7 +638,8 @@ def index():
         stats=stats,
         member_stats=member_stats,
         warning_stats_json=to_template_json(warning_stats),
-        recent_warnings_json=to_template_json(recent_warnings)
+        recent_warnings_json=to_template_json(recent_warnings),
+        cross_store_stats_json=to_template_json(cross_store_stats)
     )
 
 
@@ -841,26 +867,38 @@ def api_issue_band():
     base_fee = area['base_price'] if area else 0
 
     member = get_member_by_phone(phone)
+    current_store_id = get_current_store_id(user)
+    is_cross = False
+    member_home_store_id = None
+
     if member:
         member_id = member['id']
         member_discount_rate = float(member['discount_rate'])
         member_deposit_rate = float(member['deposit_discount_rate'])
         actual_deposit = round(float(area['deposit_amount']) * member_deposit_rate / 100.0, 2) if area else 0
-        base_fee = round(float(area['base_price']) * member_discount_rate / 100.0, 2) if area else 0
+        base_fee = round(float(area['base_price'] * member_discount_rate / 100.0), 2) if area else 0
+        member_home_store_id = member.get('home_store_id')
+        if is_cross_store_member(member, current_store_id):
+            is_cross = True
+            valid, err_msg = validate_cross_store_rights(member, 'issue', current_store_id)
+            if not valid:
+                return json_response(None, False, f'跨店权益校验失败: {err_msg}')
 
     execute('''
         INSERT INTO issue_records 
         (serial_no, customer_name, phone, wristband_id, bath_area_id, issue_time, 
          base_fee, deposit_amount, operator_id, fee_status, lost_status,
-         member_id, actual_deposit, member_discount_rate, member_deposit_rate)
+         member_id, actual_deposit, member_discount_rate, member_deposit_rate,
+         store_id, is_cross_store, member_home_store_id)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'unsettled', 'normal',
-                %s, %s, %s, %s)
+                %s, %s, %s, %s, %s, %s, %s)
     ''', (
         serial_no, data.get('customer_name', ''), phone, wristband_id,
         band['bath_area_id'], issue_time,
         base_fee, area['deposit_amount'] if area else 0,
         user['id'],
-        member_id, actual_deposit, member_discount_rate, member_deposit_rate
+        member_id, actual_deposit, member_discount_rate, member_deposit_rate,
+        current_store_id, is_cross, member_home_store_id
     ))
 
     execute(
@@ -881,6 +919,23 @@ def api_issue_band():
         change_time=issue_time,
         remark=f'会员: {"是" if member_id else "否"}, 实收押金: {actual_deposit}元, 折扣率: {member_discount_rate}%'
     )
+
+    if is_cross and member_id and member_home_store_id and current_store_id:
+        original_amount = float(area['base_price'] if area else 0)
+        discount_savings = original_amount - base_fee
+        rule = get_clearing_rule(member_home_store_id, current_store_id, member.get('level_id'))
+        create_cross_store_record(
+            member_id=member_id,
+            issue_record_id=new_record['id'] if new_record else None,
+            home_store_id=member_home_store_id,
+            consume_store_id=current_store_id,
+            operation_type='issue',
+            original_amount=original_amount,
+            deduction_amount=discount_savings,
+            operator_id=user['id'],
+            clearing_rule_id=rule['id'] if rule else None,
+            remark=f'跨店发牌 折扣优惠{discount_savings:.2f}元'
+        )
 
     shift = get_active_shift(user['id'])
     if shift:
@@ -963,7 +1018,14 @@ def api_return_band(record_id):
     if record.get('member_id'):
         member = query_one("SELECT * FROM members WHERE id = %s", (record['member_id'],))
         if member:
+            current_store_id = get_current_store_id(user)
+            is_cross = is_cross_store_member(member, current_store_id)
+
             if use_package_id:
+                if is_cross:
+                    valid, err_msg = validate_cross_store_rights(member, 'use_package', current_store_id)
+                    if not valid:
+                        return json_response(None, False, f'跨店权益校验失败: {err_msg}')
                 pkg_purchase = query_one("SELECT * FROM member_package_purchases WHERE id = %s", (use_package_id,))
                 if pkg_purchase:
                     deduction_amount = min(total_fee, float(record['base_fee'] or 0))
@@ -972,11 +1034,37 @@ def api_return_band(record_id):
                         total_fee = max(0, total_fee - package_deduction)
 
             if use_balance and total_fee > 0:
+                if is_cross:
+                    valid, err_msg = validate_cross_store_rights(member, 'use_balance', current_store_id)
+                    if not valid:
+                        return json_response(None, False, f'跨店权益校验失败: {err_msg}')
                 balance_available = float(member['balance'])
                 balance_deduction = min(total_fee, balance_available)
                 if balance_deduction > 0:
                     if deduct_member_balance(record['member_id'], balance_deduction, record_id, user['id'], f'退牌结算余额抵扣 {balance_deduction}元'):
                         total_fee = max(0, total_fee - balance_deduction)
+
+            if is_cross and (package_deduction > 0 or balance_deduction > 0):
+                home_store_id = member.get('home_store_id')
+                if home_store_id and current_store_id:
+                    total_deduction = package_deduction + balance_deduction
+                    rule = get_clearing_rule(home_store_id, current_store_id, member.get('level_id'))
+                    cross_store_ded = total_deduction
+                    create_cross_store_record(
+                        member_id=member['id'],
+                        issue_record_id=record_id,
+                        home_store_id=home_store_id,
+                        consume_store_id=current_store_id,
+                        operation_type='return_settle',
+                        original_amount=total_fee + total_deduction,
+                        deduction_amount=total_deduction,
+                        operator_id=user['id'],
+                        clearing_rule_id=rule['id'] if rule else None,
+                        remark=f'跨店退牌结算 套餐抵扣{package_deduction:.2f}元 余额抵扣{balance_deduction:.2f}元'
+                    )
+                    execute('''
+                        UPDATE issue_records SET cross_store_deduction = %s WHERE id = %s
+                    ''', (cross_store_ded, record_id))
 
             shift = get_active_shift(user['id'])
             if shift:
@@ -1339,6 +1427,11 @@ def shift_summary_page():
         'member_package_purchase_count': int(shift.get('member_package_purchase_count', 0) or 0),
         'member_gift_balance_used': float(shift.get('member_gift_balance_used', 0) or 0),
         'member_new_count': int(shift.get('member_new_count', 0) or 0),
+        'cross_store_income': float(shift.get('cross_store_income', 0) or 0),
+        'cross_store_deduction': float(shift.get('cross_store_deduction', 0) or 0),
+        'cross_store_issue_count': int(shift.get('cross_store_issue_count', 0) or 0),
+        'pending_clearing_amount': float(shift.get('pending_clearing_amount', 0) or 0),
+        'hq_subsidy_amount': float(shift.get('hq_subsidy_amount', 0) or 0),
     }
 
     warning_stats = get_unread_warning_stats()
@@ -1783,12 +1876,15 @@ def api_create_member():
 
     member_no = generate_member_no()
     level_id = data.get('level_id', 1)
+    home_store_id = data.get('home_store_id') or get_current_store_id(user)
+    balance_cross_store = data.get('balance_cross_store_enabled', False)
 
     execute('''
-        INSERT INTO members (member_no, name, phone, gender, id_card, level_id, remark)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO members (member_no, name, phone, gender, id_card, level_id, remark, home_store_id, balance_cross_store_enabled)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
     ''', (member_no, data.get('name', ''), phone, data.get('gender', ''),
-          data.get('id_card', ''), level_id, data.get('remark', '')))
+          data.get('id_card', ''), level_id, data.get('remark', ''),
+          home_store_id, balance_cross_store))
 
     member = query_one("SELECT * FROM members WHERE member_no = %s", (member_no,))
 
@@ -1819,12 +1915,16 @@ def api_update_member(member_id):
             return json_response(None, False, '该手机号已被其他会员使用')
 
     execute('''
-        UPDATE members SET name=%s, phone=%s, gender=%s, id_card=%s, level_id=%s, remark=%s
+        UPDATE members SET name=%s, phone=%s, gender=%s, id_card=%s, level_id=%s, remark=%s,
+               home_store_id=%s, balance_cross_store_enabled=%s
         WHERE id=%s
     ''', (data.get('name', ''), new_phone or member['phone'],
           data.get('gender', ''), data.get('id_card', ''),
           data.get('level_id', member['level_id']),
-          data.get('remark', ''), member_id))
+          data.get('remark', ''),
+          data.get('home_store_id', member.get('home_store_id')),
+          data.get('balance_cross_store_enabled', member.get('balance_cross_store_enabled', False)),
+          member_id))
 
     if data.get('status') and data.get('status') != member['status']:
         execute("UPDATE members SET status = %s WHERE id = %s", (data['status'], member_id))
@@ -2010,6 +2110,10 @@ def api_member_lookup():
     member['total_available'] = float(member.get('balance', 0) or 0) + float(member.get('gift_balance', 0) or 0)
     bonus_preview = get_bonus_for_topup(member.get('level_id', 1), 0)[0]
     member['bonus_available'] = bonus_preview > 0
+    home_store = query_one("SELECT id, name, store_code FROM stores WHERE id = %s", (member.get('home_store_id'),))
+    member['home_store'] = dict(home_store) if home_store else None
+    current_store_id_val = get_current_store_id(get_session_user())
+    member['is_cross_store'] = is_cross_store_member(member, current_store_id_val)
     next_level = query_one('''
         SELECT * FROM member_levels WHERE is_active = TRUE AND min_top_up > %s
         ORDER BY min_top_up ASC LIMIT 1
@@ -2081,12 +2185,12 @@ def api_create_member_package():
         if isinstance(area_ids, str):
             area_ids = [int(x) for x in area_ids.split(',') if x.strip()]
         execute('''
-            INSERT INTO member_packages (name, package_type, total_count, valid_days, price, original_value, applicable_bath_area_ids, description)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO member_packages (name, package_type, total_count, valid_days, price, original_value, applicable_bath_area_ids, cross_store_enabled, description)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         ''', (data['name'], data['package_type'],
               data.get('total_count'), data.get('valid_days'),
               float(data['price']), float(data['original_value']),
-              area_ids, data.get('description', '')))
+              area_ids, data.get('cross_store_enabled', False), data.get('description', '')))
         return json_response(None, True, '套餐创建成功')
     except Exception as e:
         return json_response(None, False, str(e))
@@ -2102,12 +2206,14 @@ def api_update_member_package(pkg_id):
             area_ids = [int(x) for x in area_ids.split(',') if x.strip()]
         execute('''
             UPDATE member_packages SET name=%s, package_type=%s, total_count=%s, valid_days=%s,
-                   price=%s, original_value=%s, applicable_bath_area_ids=%s, description=%s, is_active=%s
+                   price=%s, original_value=%s, applicable_bath_area_ids=%s, cross_store_enabled=%s,
+                   description=%s, is_active=%s
             WHERE id=%s
         ''', (data['name'], data['package_type'],
               data.get('total_count'), data.get('valid_days'),
               float(data['price']), float(data['original_value']),
-              area_ids, data.get('description', ''),
+              area_ids, data.get('cross_store_enabled', False),
+              data.get('description', ''),
               data.get('is_active', True), pkg_id))
         return json_response(None, True, '套餐更新成功')
     except Exception as e:
@@ -2175,6 +2281,8 @@ def api_warning_types():
          'description': '会员短期内频繁大额充值'},
         {'type': 'member_upgrade', 'name': '会员升级', 'default_level': 'normal',
          'description': '会员自动升级等级通知'},
+        {'type': 'cross_store_discount_anomaly', 'name': '跨店优惠异常', 'default_level': 'high',
+         'description': '会员短期内频繁跨店消费或跨店抵扣金额异常偏高'},
     ]
     return json_response(types)
 
@@ -2366,6 +2474,587 @@ def api_member_manual_upgrade(member_id):
           data.get('remark', '') or f'手动调整为{new_level["name"]}'))
     execute("UPDATE members SET level_id = %s WHERE id = %s", (new_level_id, member_id))
     return json_response(None, True, f'会员等级已调整为{new_level["name"]}')
+
+
+def get_current_store_id(user):
+    if not user:
+        return None
+    u = query_one("SELECT store_id FROM users WHERE id = %s", (user['id'],))
+    return u['store_id'] if u and u.get('store_id') else None
+
+
+def is_cross_store_member(member, current_store_id):
+    if not member or not current_store_id:
+        return False
+    home_store_id = member.get('home_store_id')
+    return home_store_id is not None and home_store_id != current_store_id
+
+
+def validate_cross_store_rights(member, operation_type, current_store_id):
+    if not is_cross_store_member(member, current_store_id):
+        return True, None
+    if operation_type in ('issue', 'return', 'reissue'):
+        return True, None
+    if operation_type == 'use_package':
+        packages = get_member_available_packages(member['id'])
+        for pkg in packages:
+            if pkg.get('cross_store_enabled'):
+                return True, None
+        return False, '该会员的套餐不支持跨店使用'
+    if operation_type == 'use_balance':
+        if member.get('balance_cross_store_enabled'):
+            return True, None
+        return False, '该会员的储值余额不支持跨店使用'
+    return True, None
+
+
+def get_clearing_rule(home_store_id, consume_store_id, member_level_id=None):
+    rules = query('''
+        SELECT * FROM store_clearing_rules
+        WHERE is_active = TRUE AND source_store_id = %s AND target_store_id = %s
+        ORDER BY priority DESC
+    ''', (home_store_id, consume_store_id))
+    for r in rules:
+        r = dict(r)
+        applicable_ids = r.get('applicable_level_ids') or []
+        if not applicable_ids or (member_level_id and member_level_id in applicable_ids):
+            return r
+    rules2 = query('''
+        SELECT * FROM store_clearing_rules
+        WHERE is_active = TRUE AND source_store_id = %s AND target_store_id IS NULL
+        ORDER BY priority DESC
+    ''', (home_store_id,))
+    for r in rules2:
+        r = dict(r)
+        applicable_ids = r.get('applicable_level_ids') or []
+        if not applicable_ids or (member_level_id and member_level_id in applicable_ids):
+            return r
+    return None
+
+
+def create_cross_store_record(member_id, issue_record_id, home_store_id, consume_store_id,
+                               operation_type, original_amount, deduction_amount,
+                               operator_id, clearing_rule_id=None, remark=''):
+    record_id = execute_and_return_id('''
+        INSERT INTO cross_store_records
+        (member_id, issue_record_id, home_store_id, consume_store_id,
+         operation_type, original_amount, deduction_amount,
+         clearing_rule_id, operator_id, remark)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+    ''', (member_id, issue_record_id, home_store_id, consume_store_id,
+          operation_type, original_amount, deduction_amount,
+          clearing_rule_id, operator_id, remark))
+
+    rule = None
+    if clearing_rule_id:
+        rule = query_one("SELECT * FROM store_clearing_rules WHERE id = %s", (clearing_rule_id,))
+    if not rule:
+        rule = {'source_ratio': 50.00, 'target_ratio': 50.00, 'hq_subsidy_ratio': 0.00}
+
+    if deduction_amount > 0:
+        source_amount = round(deduction_amount * float(rule['source_ratio']) / 100.0, 2)
+        target_amount = round(deduction_amount * float(rule['target_ratio']) / 100.0, 2)
+        hq_amount = round(deduction_amount * float(rule.get('hq_subsidy_ratio', 0) or 0) / 100.0, 2)
+
+        execute('''
+            INSERT INTO clearing_records (cross_store_record_id, store_id, amount_type, amount, status)
+            VALUES (%s, %s, 'source_income', %s, 'pending')
+        ''', (record_id, home_store_id, source_amount))
+
+        execute('''
+            INSERT INTO clearing_records (cross_store_record_id, store_id, amount_type, amount, status)
+            VALUES (%s, %s, 'target_income', %s, 'pending')
+        ''', (record_id, consume_store_id, target_amount))
+
+        if hq_amount > 0:
+            hq_store = query_one("SELECT id FROM stores WHERE is_headquarters = TRUE LIMIT 1")
+            if hq_store:
+                execute('''
+                    INSERT INTO clearing_records (cross_store_record_id, store_id, amount_type, amount, status)
+                    VALUES (%s, %s, 'hq_subsidy', %s, 'pending')
+                ''', (record_id, hq_store['id'], hq_amount))
+
+    shift = get_active_shift(operator_id)
+    if shift:
+        execute('''UPDATE shift_records SET
+            cross_store_deduction = cross_store_deduction + %s,
+            pending_clearing_amount = pending_clearing_amount + %s,
+            cross_store_issue_count = cross_store_issue_count + 1
+            WHERE id = %s''', (deduction_amount, deduction_amount, shift['id']))
+
+    return record_id
+
+
+def process_cross_store_clearing(cross_store_record_id, operator_id):
+    record = query_one("SELECT * FROM cross_store_records WHERE id = %s", (cross_store_record_id,))
+    if not record:
+        return False
+    if record['clearing_status'] != 'pending':
+        return False
+
+    clearings = query('''
+        SELECT * FROM clearing_records WHERE cross_store_record_id = %s AND status = 'pending'
+    ''', (cross_store_record_id,))
+
+    for c in clearings:
+        execute('''
+            UPDATE clearing_records SET status = 'settled', settled_at = %s
+            WHERE id = %s
+        ''', (datetime.now(), c['id']))
+
+    execute('''
+        UPDATE cross_store_records SET clearing_status = 'settled', settled_at = %s
+        WHERE id = %s
+    ''', (datetime.now(), cross_store_record_id))
+
+    return True
+
+
+def check_cross_store_discount_anomaly():
+    from datetime import timedelta
+    days_threshold = 7
+    since = datetime.now() - timedelta(days=days_threshold)
+
+    records = query('''
+        SELECT csr.member_id, m.name as member_name, m.phone, m.level_id,
+               ml.name as level_name, COUNT(*) as cross_count,
+               SUM(csr.deduction_amount) as total_deduction
+        FROM cross_store_records csr
+        LEFT JOIN members m ON csr.member_id = m.id
+        LEFT JOIN member_levels ml ON m.level_id = ml.id
+        WHERE csr.created_at >= %s
+        GROUP BY csr.member_id, m.name, m.phone, m.level_id, ml.name
+        HAVING COUNT(*) >= 5 OR SUM(csr.deduction_amount) >= 3000
+    ''', (since,))
+
+    for r in records:
+        r = dict(r)
+        existing = query_one('''
+            SELECT id FROM warnings
+            WHERE warning_type = 'cross_store_discount_anomaly' AND phone = %s AND is_resolved = FALSE
+              AND created_at >= %s
+        ''', (r['phone'], since))
+        if not existing:
+            create_warning(
+                warning_type='cross_store_discount_anomaly',
+                warning_level='high',
+                title=f'会员[{r["member_name"]}]跨店优惠异常',
+                content=f'会员 {r["member_name"]}({r["phone"]}) 等级:{r["level_name"]}, '
+                        f'在{days_threshold}天内跨店消费{r["cross_count"]}次, '
+                        f'跨店抵扣总额: {float(r["total_deduction"]):.2f}元, 请核查是否存在异常',
+                phone=r['phone'],
+                related_data={
+                    'member_id': r['member_id'],
+                    'cross_count': int(r['cross_count']),
+                    'total_deduction': float(r['total_deduction']),
+                    'days': days_threshold
+                }
+            )
+
+
+@app.route('/store-management')
+@require_login
+def store_management_page():
+    user = get_session_user()
+    return template('templates/store_management.html', user=user)
+
+
+@app.route('/api/stores', method='GET')
+@require_login
+def api_stores_list():
+    rows = query('SELECT * FROM stores ORDER BY is_headquarters DESC, id')
+    return json_response([dict(r) for r in rows])
+
+
+@app.route('/api/stores', method='POST')
+@require_login
+def api_create_store():
+    data = request.json
+    try:
+        store_code = data.get('store_code', '').strip()
+        if not store_code:
+            return json_response(None, False, '门店编码不能为空')
+        existing = query_one("SELECT id FROM stores WHERE store_code = %s", (store_code,))
+        if existing:
+            return json_response(None, False, '门店编码已存在')
+        execute('''
+            INSERT INTO stores (store_code, name, address, contact_phone, manager_name, is_headquarters)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        ''', (store_code, data['name'], data.get('address', ''),
+              data.get('contact_phone', ''), data.get('manager_name', ''),
+              data.get('is_headquarters', False)))
+        return json_response(None, True, '门店创建成功')
+    except Exception as e:
+        return json_response(None, False, str(e))
+
+
+@app.route('/api/stores/<store_id:int>', method='PUT')
+@require_login
+def api_update_store(store_id):
+    data = request.json
+    try:
+        execute('''
+            UPDATE stores SET name=%s, address=%s, contact_phone=%s,
+                   manager_name=%s, is_active=%s, is_headquarters=%s
+            WHERE id=%s
+        ''', (data['name'], data.get('address', ''), data.get('contact_phone', ''),
+              data.get('manager_name', ''), data.get('is_active', True),
+              data.get('is_headquarters', False), store_id))
+        return json_response(None, True, '门店更新成功')
+    except Exception as e:
+        return json_response(None, False, str(e))
+
+
+@app.route('/api/stores/<store_id:int>', method='DELETE')
+@require_login
+def api_delete_store(store_id):
+    store = query_one("SELECT * FROM stores WHERE id = %s", (store_id,))
+    if not store:
+        return json_response(None, False, '门店不存在')
+    if store['is_headquarters']:
+        return json_response(None, False, '总部门店不可删除')
+    has_data = query_one("SELECT COUNT(*) as cnt FROM bath_areas WHERE store_id = %s", (store_id,))
+    if has_data['cnt'] > 0:
+        return json_response(None, False, '该门店下还有浴区数据，无法删除')
+    execute("DELETE FROM stores WHERE id = %s", (store_id,))
+    return json_response(None, True, '门店删除成功')
+
+
+@app.route('/api/stores/<store_id:int>/stats', method='GET')
+@require_login
+def api_store_stats(store_id):
+    today = date.today()
+    today_str = today.strftime('%Y-%m-%d')
+
+    def safe_count(sql, *params):
+        try:
+            r = query_one(sql, params)
+            return int(r['cnt']) if r else 0
+        except Exception:
+            return 0
+
+    def safe_sum(sql, *params):
+        try:
+            r = query_one(sql, params)
+            return float(r['total']) if r and r['total'] else 0.0
+        except Exception:
+            return 0.0
+
+    stats = {
+        'today_local_income': safe_sum('''
+            SELECT SUM(base_fee + extra_fee + loss_fee + reissue_fee) as total
+            FROM issue_records WHERE store_id = %s AND fee_status = 'settled' AND DATE(issue_time) = %s
+        ''', store_id, today_str),
+        'today_cross_store_income': safe_sum('''
+            SELECT COALESCE(SUM(amount), 0) as total FROM clearing_records
+            WHERE store_id = %s AND amount_type = 'target_income' AND status = 'settled'
+              AND DATE(settled_at) = %s
+        ''', store_id, today_str),
+        'today_cross_store_deduction': safe_sum('''
+            SELECT COALESCE(SUM(deduction_amount), 0) as total FROM cross_store_records
+            WHERE consume_store_id = %s AND DATE(created_at) = %s
+        ''', store_id, today_str),
+        'pending_clearing': safe_sum('''
+            SELECT COALESCE(SUM(amount), 0) as total FROM clearing_records
+            WHERE store_id = %s AND status = 'pending'
+        ''', store_id),
+        'hq_subsidy_total': safe_sum('''
+            SELECT COALESCE(SUM(amount), 0) as total FROM clearing_records
+            WHERE store_id = %s AND amount_type = 'hq_subsidy' AND status = 'settled'
+        ''', store_id),
+        'total_members_home': safe_count('''
+            SELECT COUNT(*) as cnt FROM members WHERE home_store_id = %s AND status = 'active'
+        ''', store_id),
+        'today_cross_store_visits': safe_count('''
+            SELECT COUNT(*) as cnt FROM cross_store_records
+            WHERE consume_store_id = %s AND DATE(created_at) = %s
+        ''', store_id, today_str),
+    }
+    return json_response(stats)
+
+
+@app.route('/api/clearing-rules', method='GET')
+@require_login
+def api_clearing_rules_list():
+    rows = query('''
+        SELECT scr.*, s1.name as source_store_name, s2.name as target_store_name
+        FROM store_clearing_rules scr
+        LEFT JOIN stores s1 ON scr.source_store_id = s1.id
+        LEFT JOIN stores s2 ON scr.target_store_id = s2.id
+        ORDER BY scr.priority DESC, scr.id
+    ''')
+    return json_response([dict(r) for r in rows])
+
+
+@app.route('/api/clearing-rules', method='POST')
+@require_login
+def api_create_clearing_rule():
+    data = request.json
+    try:
+        level_ids = data.get('applicable_level_ids', [])
+        if isinstance(level_ids, str):
+            level_ids = [int(x) for x in level_ids.split(',') if x.strip()]
+        target_store_id = data.get('target_store_id') or None
+        execute('''
+            INSERT INTO store_clearing_rules
+            (name, rule_type, source_store_id, target_store_id,
+             source_ratio, target_ratio, hq_subsidy_ratio, hq_subsidy_max,
+             applicable_level_ids, priority, description)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ''', (data['name'], data['rule_type'],
+              data['source_store_id'], target_store_id,
+              float(data.get('source_ratio', 50)), float(data.get('target_ratio', 50)),
+              float(data.get('hq_subsidy_ratio', 0)), float(data.get('hq_subsidy_max', 0)),
+              level_ids, int(data.get('priority', 0)), data.get('description', '')))
+        return json_response(None, True, '清分规则创建成功')
+    except Exception as e:
+        return json_response(None, False, str(e))
+
+
+@app.route('/api/clearing-rules/<rule_id:int>', method='PUT')
+@require_login
+def api_update_clearing_rule(rule_id):
+    data = request.json
+    try:
+        level_ids = data.get('applicable_level_ids', [])
+        if isinstance(level_ids, str):
+            level_ids = [int(x) for x in level_ids.split(',') if x.strip()]
+        target_store_id = data.get('target_store_id') or None
+        execute('''
+            UPDATE store_clearing_rules SET
+                name=%s, rule_type=%s, source_store_id=%s, target_store_id=%s,
+                source_ratio=%s, target_ratio=%s, hq_subsidy_ratio=%s, hq_subsidy_max=%s,
+                applicable_level_ids=%s, priority=%s, description=%s, is_active=%s
+            WHERE id=%s
+        ''', (data['name'], data['rule_type'],
+              data['source_store_id'], target_store_id,
+              float(data.get('source_ratio', 50)), float(data.get('target_ratio', 50)),
+              float(data.get('hq_subsidy_ratio', 0)), float(data.get('hq_subsidy_max', 0)),
+              level_ids, int(data.get('priority', 0)), data.get('description', ''),
+              data.get('is_active', True), rule_id))
+        return json_response(None, True, '清分规则更新成功')
+    except Exception as e:
+        return json_response(None, False, str(e))
+
+
+@app.route('/api/clearing-rules/<rule_id:int>', method='DELETE')
+@require_login
+def api_delete_clearing_rule(rule_id):
+    execute("DELETE FROM store_clearing_rules WHERE id = %s", (rule_id,))
+    return json_response(None, True, '清分规则删除成功')
+
+
+@app.route('/api/cross-store/records', method='GET')
+@require_login
+def api_cross_store_records():
+    status = request.query.get('status', '')
+    store_id = request.query.get('store_id', '')
+    start_date = request.query.get('start_date', '')
+    end_date = request.query.get('end_date', '')
+    limit = request.query.get('limit', '100')
+
+    sql = '''
+        SELECT csr.*, m.name as member_name, m.phone as member_phone, m.member_no,
+               s1.name as home_store_name, s2.name as consume_store_name,
+               scr.name as rule_name, u.full_name as operator_name
+        FROM cross_store_records csr
+        LEFT JOIN members m ON csr.member_id = m.id
+        LEFT JOIN stores s1 ON csr.home_store_id = s1.id
+        LEFT JOIN stores s2 ON csr.consume_store_id = s2.id
+        LEFT JOIN store_clearing_rules scr ON csr.clearing_rule_id = scr.id
+        LEFT JOIN users u ON csr.operator_id = u.id
+        WHERE 1=1
+    '''
+    params = []
+    if status:
+        sql += " AND csr.clearing_status = %s"
+        params.append(status)
+    if store_id:
+        sql += " AND (csr.home_store_id = %s OR csr.consume_store_id = %s)"
+        params.extend([int(store_id), int(store_id)])
+    if start_date:
+        sql += " AND csr.created_at >= %s"
+        params.append(start_date)
+    if end_date:
+        sql += " AND csr.created_at <= %s"
+        params.append(end_date + ' 23:59:59')
+    sql += " ORDER BY csr.created_at DESC LIMIT %s"
+    try:
+        params.append(int(limit))
+    except ValueError:
+        params.append(100)
+    rows = query(sql, params)
+    return json_response([dict(r) for r in rows])
+
+
+@app.route('/api/cross-store/clearing/<record_id:int>', method='POST')
+@require_login
+def api_cross_store_clearing(record_id):
+    user = get_session_user()
+    success = process_cross_store_clearing(record_id, user['id'])
+    if success:
+        return json_response(None, True, '清分结算完成')
+    return json_response(None, False, '清分结算失败，记录不存在或已结算')
+
+
+@app.route('/api/cross-store/batch-clearing', method='POST')
+@require_login
+def api_cross_store_batch_clearing():
+    data = request.json
+    user = get_session_user()
+    record_ids = data.get('record_ids', [])
+    success_count = 0
+    for rid in record_ids:
+        if process_cross_store_clearing(rid, user['id']):
+            success_count += 1
+    return json_response({'success_count': success_count, 'total': len(record_ids)},
+                         True, f'批量结算完成：{success_count}/{len(record_ids)}条成功')
+
+
+@app.route('/api/cross-store/clearing-records', method='GET')
+@require_login
+def api_clearing_records():
+    store_id = request.query.get('store_id', '')
+    status = request.query.get('status', '')
+    sql = '''
+        SELECT cr.*, csr.member_id, csr.operation_type, csr.deduction_amount,
+               m.name as member_name, s.name as store_name
+        FROM clearing_records cr
+        LEFT JOIN cross_store_records csr ON cr.cross_store_record_id = csr.id
+        LEFT JOIN members m ON csr.member_id = m.id
+        LEFT JOIN stores s ON cr.store_id = s.id
+        WHERE 1=1
+    '''
+    params = []
+    if store_id:
+        sql += " AND cr.store_id = %s"
+        params.append(int(store_id))
+    if status:
+        sql += " AND cr.status = %s"
+        params.append(status)
+    sql += " ORDER BY cr.created_at DESC LIMIT 200"
+    rows = query(sql, params)
+    return json_response([dict(r) for r in rows])
+
+
+@app.route('/cross-store-report')
+@require_login
+def cross_store_report_page():
+    user = get_session_user()
+    return template('templates/cross_store_report.html', user=user)
+
+
+@app.route('/api/hq/report', method='GET')
+@require_login
+def api_hq_report():
+    start_date = request.query.get('start_date', '')
+    end_date = request.query.get('end_date', '')
+
+    stores = query("SELECT * FROM stores WHERE is_active = TRUE ORDER BY is_headquarters DESC, id")
+    result = []
+
+    for s in stores:
+        s = dict(s)
+        params = [s['id']]
+
+        date_filter = ''
+        if start_date:
+            date_filter += " AND csr.created_at >= %s"
+            params.append(start_date)
+        if end_date:
+            date_filter += " AND csr.created_at <= %s"
+            params.append(end_date + ' 23:59:59')
+
+        params_copy = list(params)
+
+        outgoing = query_one(f'''
+            SELECT COUNT(*) as cnt, COALESCE(SUM(deduction_amount), 0) as total_deduction
+            FROM cross_store_records csr
+            WHERE csr.home_store_id = %s AND csr.clearing_status = 'pending' {date_filter}
+        ''', params)
+        params = [s['id']] + params_copy[1:]
+        if start_date:
+            params.append(start_date)
+        if end_date:
+            params.append(end_date + ' 23:59:59')
+
+        incoming = query_one(f'''
+            SELECT COUNT(*) as cnt, COALESCE(SUM(deduction_amount), 0) as total_deduction
+            FROM cross_store_records csr
+            WHERE csr.consume_store_id = %s {date_filter}
+        ''', params)
+
+        pending_clearing = query_one('''
+            SELECT COALESCE(SUM(amount), 0) as total FROM clearing_records
+            WHERE store_id = %s AND status = 'pending'
+        ''', (s['id'],))
+
+        settled_clearing = query_one('''
+            SELECT COALESCE(SUM(amount), 0) as total FROM clearing_records
+            WHERE store_id = %s AND status = 'settled'
+        ''', (s['id'],))
+
+        hq_subsidy = query_one('''
+            SELECT COALESCE(SUM(amount), 0) as total FROM clearing_records
+            WHERE store_id = %s AND amount_type = 'hq_subsidy'
+        ''', (s['id'],))
+
+        s['outgoing'] = {
+            'count': int(outgoing['cnt']) if outgoing else 0,
+            'total': float(outgoing['total_deduction']) if outgoing else 0.0,
+        }
+        s['incoming'] = {
+            'count': int(incoming['cnt']) if incoming else 0,
+            'total': float(incoming['total_deduction']) if incoming else 0.0,
+        }
+        s['pending_clearing'] = float(pending_clearing['total']) if pending_clearing else 0.0
+        s['settled_clearing'] = float(settled_clearing['total']) if settled_clearing else 0.0
+        s['hq_subsidy'] = float(hq_subsidy['total']) if hq_subsidy else 0.0
+        result.append(s)
+
+    return json_response(result)
+
+
+@app.route('/api/hq/store-summary', method='GET')
+@require_login
+def api_hq_store_summary():
+    today = date.today()
+    today_str = today.strftime('%Y-%m-%d')
+
+    stores = query("SELECT * FROM stores WHERE is_active = TRUE ORDER BY is_headquarters DESC, id")
+    result = []
+    for s in stores:
+        s = dict(s)
+
+        local_income = query_one('''
+            SELECT COALESCE(SUM(base_fee + extra_fee + loss_fee + reissue_fee), 0) as total
+            FROM issue_records WHERE store_id = %s AND fee_status = 'settled' AND DATE(issue_time) = %s
+        ''', (s['id'], today_str))
+
+        cross_income = query_one('''
+            SELECT COALESCE(SUM(amount), 0) as total FROM clearing_records
+            WHERE store_id = %s AND amount_type = 'target_income' AND status = 'settled'
+              AND DATE(settled_at) = %s
+        ''', (s['id'], today_str))
+
+        cross_deduction = query_one('''
+            SELECT COALESCE(SUM(deduction_amount), 0) as total FROM cross_store_records
+            WHERE consume_store_id = %s AND DATE(created_at) = %s
+        ''', (s['id'], today_str))
+
+        pending = query_one('''
+            SELECT COALESCE(SUM(amount), 0) as total FROM clearing_records
+            WHERE store_id = %s AND status = 'pending'
+        ''', (s['id'],))
+
+        s['today_local_income'] = float(local_income['total']) if local_income else 0.0
+        s['today_cross_income'] = float(cross_income['total']) if cross_income else 0.0
+        s['today_cross_deduction'] = float(cross_deduction['total']) if cross_deduction else 0.0
+        s['pending_clearing'] = float(pending['total']) if pending else 0.0
+        s['today_total'] = s['today_local_income'] + s['today_cross_income']
+        result.append(s)
+
+    return json_response(result)
 
 
 if __name__ == '__main__':

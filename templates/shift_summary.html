@@ -41,7 +41,9 @@
             <a class="navbar-item" href="/warnings">预警中心
                 <span class="warning-badge" x-show="warningStats && warningStats.total_unread > 0" x-text="warningStats.total_unread"></span>
             </a>
-            <a class="navbar-item is-active" href="/shift-summary">交接汇总</a>
+            <a class="navbar-item" href="/shift-summary">交接汇总</a>
+            <a class="navbar-item" href="/store-management">门店管理</a>
+            <a class="navbar-item" href="/cross-store-report">清分报表</a>
         </div>
         <div class="navbar-end">
             <div class="navbar-item">
@@ -188,6 +190,47 @@
                             <div class="notification is-danger is-light py-3 px-3 mb-0">
                                 <p class="heading is-size-7">抵扣合计</p>
                                 <p class="is-size-4 has-text-weight-bold has-text-danger">¥ <span x-text="summary ? (parseFloat(summary.member_balance_deduction||0) + parseFloat(summary.member_package_deduction||0) + parseFloat(summary.member_gift_balance_used||0)).toFixed(2) : '0.00'"></span></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="box" style="background: linear-gradient(135deg, #fff5f5 0%, #fffbf0 100%); border-color: #ff6b6b;">
+                    <div class="level is-mobile mb-3">
+                        <div class="level-left"><h2 class="subtitle mb-0">🏪 跨店清分数据</h2></div>
+                        <div class="level-right">
+                            <a class="button is-small is-danger is-outlined" href="/cross-store-report">查看清分报表 →</a>
+                        </div>
+                    </div>
+                    <div class="columns">
+                        <div class="column">
+                            <div class="notification is-link is-light py-3 px-3 mb-0">
+                                <p class="heading is-size-7">跨店发牌数</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-link" x-text="summary ? summary.cross_store_issue_count : 0"></p>
+                            </div>
+                        </div>
+                        <div class="column">
+                            <div class="notification is-warning is-light py-3 px-3 mb-0">
+                                <p class="heading is-size-7">跨店抵扣</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-warning-dark">¥ <span x-text="summary ? parseFloat(summary.cross_store_deduction).toFixed(2) : '0.00'"></span></p>
+                            </div>
+                        </div>
+                        <div class="column">
+                            <div class="notification is-success is-light py-3 px-3 mb-0">
+                                <p class="heading is-size-7">跨店收入</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-success">¥ <span x-text="summary ? parseFloat(summary.cross_store_income).toFixed(2) : '0.00'"></span></p>
+                            </div>
+                        </div>
+                        <div class="column">
+                            <div class="notification is-danger is-light py-3 px-3 mb-0">
+                                <p class="heading is-size-7">待清算金额</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-danger">¥ <span x-text="summary ? parseFloat(summary.pending_clearing_amount).toFixed(2) : '0.00'"></span></p>
+                            </div>
+                        </div>
+                        <div class="column">
+                            <div class="notification is-info is-light py-3 px-3 mb-0">
+                                <p class="heading is-size-7">总部补贴</p>
+                                <p class="is-size-4 has-text-weight-bold has-text-info">¥ <span x-text="summary ? parseFloat(summary.hq_subsidy_amount).toFixed(2) : '0.00'"></span></p>
                             </div>
                         </div>
                     </div>
@@ -344,7 +387,8 @@ function shiftApp() {
                 'abnormal_discount':'异常优惠',
                 'balance_anomaly':'储值异常',
                 'topup_anomaly':'充值频次异常',
-                'member_upgrade':'会员升级'
+                'member_upgrade':'会员升级',
+                'cross_store_discount_anomaly':'跨店优惠异常'
             };
             return m[t] || t;
         },

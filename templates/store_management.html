@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>门店管理与清分规则</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.0/dist/cdn.min.js"></script>
+    <style>
+        body { background-color: #f5f5f5; min-height: 100vh; }
+        .navbar-brand-title { font-weight: 700; font-size: 1.2rem; }
+        .warning-badge { display: inline-block; min-width: 22px; padding: 0 6px; line-height: 22px; text-align: center; border-radius: 11px; background: #f14668; color: #fff; font-size: 12px; font-weight: bold; margin-left: 4px; }
+        .tag-hq { background-color: #667eea !important; color: #fff !important; }
+    </style>
+</head>
+<body style="background-color: #f5f5f5; min-height: 100vh;" x-data="storeApp()">
+<nav class="navbar is-primary" role="navigation">
+    <div class="navbar-brand">
+        <a class="navbar-item navbar-brand-title" href="/">🛁 澡堂手牌管理系统</a>
+    </div>
+    <div class="navbar-menu">
+        <div class="navbar-start">
+            <a class="navbar-item" href="/">首页</a>
+            <a class="navbar-item" href="/bath-areas">浴区管理</a>
+            <a class="navbar-item" href="/wristbands">手牌配置</a>
+            <a class="navbar-item" href="/issue">入场发牌</a>
+            <a class="navbar-item" href="/return">退牌结算</a>
+            <a class="navbar-item" href="/report-loss">遗失申报</a>
+            <a class="navbar-item" href="/reissue-review">补办审核</a>
+            <a class="navbar-item" href="/members">会员管理</a>
+            <a class="navbar-item" href="/wristband-tracking">手牌追踪</a>
+            <a class="navbar-item" href="/warnings">预警中心
+                <span class="warning-badge" x-show="warningStats && warningStats.total_unread > 0" x-text="warningStats.total_unread"></span>
+            </a>
+            <a class="navbar-item" href="/shift-summary">交接汇总</a>
+            <a class="navbar-item is-active" href="/store-management">门店管理</a>
+            <a class="navbar-item" href="/cross-store-report">清分报表</a>
+        </div>
+        <div class="navbar-end">
+            <div class="navbar-item">
+                <span class="mr-3">欢迎，{{user['full_name']}}</span>
+                <a class="button is-light" href="/logout">退出登录</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+<section class="section">
+    <div class="container">
+        <div class="level">
+            <div class="level-left"><h1 class="title">🏪 门店管理与清分规则</h1></div>
+            <div class="level-right">
+                <button class="button is-primary" @click="showStoreModal()">新增门店</button>
+                <button class="button is-info ml-2" @click="showRuleModal()">新增清分规则</button>
+            </div>
+        </div>
+
+        <div class="box">
+            <h2 class="subtitle">门店列表</h2>
+            <table class="table is-fullwidth is-striped">
+                <thead>
+                    <tr>
+                        <th>编码</th><th>名称</th><th>地址</th><th>联系电话</th><th>负责人</th>
+                        <th>类型</th><th>状态</th><th>归属会员</th><th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="s in stores" :key="s.id">
+                        <tr>
+                            <td x-text="s.store_code"></td>
+                            <td><strong x-text="s.name"></strong></td>
+                            <td x-text="s.address || '-'"></td>
+                            <td x-text="s.contact_phone || '-'"></td>
+                            <td x-text="s.manager_name || '-'"></td>
+                            <td>
+                                <span class="tag tag-hq is-small" x-show="s.is_headquarters">总部</span>
+                                <span class="tag is-light is-small" x-show="!s.is_headquarters">分店</span>
+                            </td>
+                            <td>
+                                <span class="tag is-success is-small" x-show="s.is_active">营业中</span>
+                                <span class="tag is-danger is-small" x-show="!s.is_active">已停业</span>
+                            </td>
+                            <td>
+                                <button class="button is-small is-text" @click="loadStoreStats(s)" x-text="'查看统计'"></button>
+                            </td>
+                            <td>
+                                <button class="button is-small is-info" @click="editStore(s)">编辑</button>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <p x-show="stores.length == 0" class="has-text-grey">暂无门店数据</p>
+        </div>
+
+        <div class="box" x-show="storeStats" x-cloak>
+            <h2 class="subtitle" x-text="storeStatsTitle">门店统计</h2>
+            <div class="columns">
+                <div class="column">
+                    <div class="notification is-success is-light py-3 px-3">
+                        <p class="heading is-size-7">本店实收</p>
+                        <p class="is-size-4 has-text-weight-bold has-text-success">¥ <span x-text="storeStats ? parseFloat(storeStats.today_local_income).toFixed(2) : '0.00'"></span></p>
+                    </div>
+                </div>
+                <div class="column">
+                    <div class="notification is-info is-light py-3 px-3">
+                        <p class="heading is-size-7">跨店收入</p>
+                        <p class="is-size-4 has-text-weight-bold has-text-info">¥ <span x-text="storeStats ? parseFloat(storeStats.today_cross_store_income).toFixed(2) : '0.00'"></span></p>
+                    </div>
+                </div>
+                <div class="column">
+                    <div class="notification is-warning is-light py-3 px-3">
+                        <p class="heading is-size-7">跨店抵扣</p>
+                        <p class="is-size-4 has-text-weight-bold has-text-warning-dark">¥ <span x-text="storeStats ? parseFloat(storeStats.today_cross_store_deduction).toFixed(2) : '0.00'"></span></p>
+                    </div>
+                </div>
+                <div class="column">
+                    <div class="notification is-danger is-light py-3 px-3">
+                        <p class="heading is-size-7">待清算金额</p>
+                        <p class="is-size-4 has-text-weight-bold has-text-danger">¥ <span x-text="storeStats ? parseFloat(storeStats.pending_clearing).toFixed(2) : '0.00'"></span></p>
+                    </div>
+                </div>
+                <div class="column">
+                    <div class="notification is-link is-light py-3 px-3">
+                        <p class="heading is-size-7">总部补贴</p>
+                        <p class="is-size-4 has-text-weight-bold has-text-link">¥ <span x-text="storeStats ? parseFloat(storeStats.hq_subsidy_total).toFixed(2) : '0.00'"></span></p>
+                    </div>
+                </div>
+            </div>
+            <div class="columns">
+                <div class="column">
+                    <div class="notification is-link is-light py-3 px-3">
+                        <p class="heading is-size-7">本店归属会员</p>
+                        <p class="is-size-4 has-text-weight-bold has-text-link" x-text="storeStats ? storeStats.total_members_home : 0"></p>
+                    </div>
+                </div>
+                <div class="column">
+                    <div class="notification is-info is-light py-3 px-3">
+                        <p class="heading is-size-7">今日跨店来客</p>
+                        <p class="is-size-4 has-text-weight-bold has-text-info" x-text="storeStats ? storeStats.today_cross_store_visits : 0"></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="box">
+            <h2 class="subtitle">清分规则</h2>
+            <table class="table is-fullwidth is-striped">
+                <thead>
+                    <tr>
+                        <th>规则名称</th><th>类型</th><th>归属门店(收)</th><th>消费门店(付)</th>
+                        <th>归属分成</th><th>消费分成</th><th>总部补贴率</th>
+                        <th>补贴上限</th><th>优先级</th><th>状态</th><th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="r in rules" :key="r.id">
+                        <tr>
+                            <td x-text="r.name"></td>
+                            <td x-text="r.rule_type"></td>
+                            <td x-text="r.source_store_name || '-'"></td>
+                            <td x-text="r.target_store_name || '所有门店'"></td>
+                            <td x-text="r.source_ratio + '%'"></td>
+                            <td x-text="r.target_ratio + '%'"></td>
+                            <td x-text="r.hq_subsidy_ratio + '%'"></td>
+                            <td x-text="'¥' + parseFloat(r.hq_subsidy_max).toFixed(2)"></td>
+                            <td x-text="r.priority"></td>
+                            <td>
+                                <span class="tag is-success is-small" x-show="r.is_active">启用</span>
+                                <span class="tag is-danger is-small" x-show="!r.is_active">停用</span>
+                            </td>
+                            <td>
+                                <button class="button is-small is-info" @click="editRule(r)">编辑</button>
+                                <button class="button is-small is-danger" @click="deleteRule(r.id)">删除</button>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <p x-show="rules.length == 0" class="has-text-grey">暂无清分规则</p>
+        </div>
+    </div>
+</section>
+
+<div class="modal" :class="{'is-active': storeModalActive}">
+    <div class="modal-background" @click="storeModalActive=false"></div>
+    <div class="modal-card">
+        <header class="modal-card-head">
+            <p class="modal-card-title" x-text="storeForm.id ? '编辑门店' : '新增门店'"></p>
+            <button class="delete" @click="storeModalActive=false"></button>
+        </header>
+        <section class="modal-card-body">
+            <div class="field">
+                <label class="label">门店编码</label>
+                <div class="control"><input class="input" x-model="storeForm.store_code" :disabled="storeForm.id" placeholder="如 S001"></div>
+            </div>
+            <div class="field">
+                <label class="label">门店名称</label>
+                <div class="control"><input class="input" x-model="storeForm.name" placeholder="如 幸福路店"></div>
+            </div>
+            <div class="field">
+                <label class="label">地址</label>
+                <div class="control"><input class="input" x-model="storeForm.address" placeholder="门店地址"></div>
+            </div>
+            <div class="field">
+                <label class="label">联系电话</label>
+                <div class="control"><input class="input" x-model="storeForm.contact_phone" placeholder="联系电话"></div>
+            </div>
+            <div class="field">
+                <label class="label">负责人</label>
+                <div class="control"><input class="input" x-model="storeForm.manager_name" placeholder="负责人姓名"></div>
+            </div>
+            <div class="field">
+                <label class="checkbox"><input type="checkbox" x-model="storeForm.is_headquarters"> 总部门店</label>
+            </div>
+            <div class="field">
+                <label class="checkbox"><input type="checkbox" x-model="storeForm.is_active"> 营业中</label>
+            </div>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button is-primary" @click="saveStore()">保存</button>
+            <button class="button" @click="storeModalActive=false">取消</button>
+        </footer>
+    </div>
+</div>
+
+<div class="modal" :class="{'is-active': ruleModalActive}">
+    <div class="modal-background" @click="ruleModalActive=false"></div>
+    <div class="modal-card">
+        <header class="modal-card-head">
+            <p class="modal-card-title" x-text="ruleForm.id ? '编辑清分规则' : '新增清分规则'"></p>
+            <button class="delete" @click="ruleModalActive=false"></button>
+        </header>
+        <section class="modal-card-body">
+            <div class="field">
+                <label class="label">规则名称</label>
+                <div class="control"><input class="input" x-model="ruleForm.name" placeholder="如 默认50/50分账"></div>
+            </div>
+            <div class="field">
+                <label class="label">规则类型</label>
+                <div class="control">
+                    <div class="select is-fullwidth">
+                        <select x-model="ruleForm.rule_type">
+                            <option value="default">默认分账</option>
+                            <option value="balance_deduction">余额抵扣分账</option>
+                            <option value="package_deduction">套餐抵扣分账</option>
+                            <option value="discount">折扣优惠分账</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="field">
+                <label class="label">归属门店(收款方)</label>
+                <div class="control">
+                    <div class="select is-fullwidth">
+                        <select x-model="ruleForm.source_store_id">
+                            <template x-for="s in stores" :key="s.id">
+                                <option :value="s.id" x-text="s.name"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="field">
+                <label class="label">消费门店(付款方，留空表示所有门店)</label>
+                <div class="control">
+                    <div class="select is-fullwidth">
+                        <select x-model="ruleForm.target_store_id">
+                            <option value="">所有门店</option>
+                            <template x-for="s in stores" :key="s.id">
+                                <option :value="s.id" x-text="s.name"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="columns">
+                <div class="column">
+                    <div class="field">
+                        <label class="label">归属门店分成%</label>
+                        <div class="control"><input class="input" type="number" x-model="ruleForm.source_ratio" placeholder="50"></div>
+                    </div>
+                </div>
+                <div class="column">
+                    <div class="field">
+                        <label class="label">消费门店分成%</label>
+                        <div class="control"><input class="input" type="number" x-model="ruleForm.target_ratio" placeholder="50"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="columns">
+                <div class="column">
+                    <div class="field">
+                        <label class="label">总部补贴率%</label>
+                        <div class="control"><input class="input" type="number" x-model="ruleForm.hq_subsidy_ratio" placeholder="0"></div>
+                    </div>
+                </div>
+                <div class="column">
+                    <div class="field">
+                        <label class="label">补贴上限(元)</label>
+                        <div class="control"><input class="input" type="number" x-model="ruleForm.hq_subsidy_max" placeholder="0"></div>
+                    </div>
+                </div>
+                <div class="column">
+                    <div class="field">
+                        <label class="label">优先级</label>
+                        <div class="control"><input class="input" type="number" x-model="ruleForm.priority" placeholder="0"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="field">
+                <label class="label">描述</label>
+                <div class="control"><input class="input" x-model="ruleForm.description" placeholder="规则描述"></div>
+            </div>
+            <div class="field">
+                <label class="checkbox"><input type="checkbox" x-model="ruleForm.is_active"> 启用</label>
+            </div>
+        </section>
+        <footer class="modal-card-foot">
+            <button class="button is-primary" @click="saveRule()">保存</button>
+            <button class="button" @click="ruleModalActive=false">取消</button>
+        </footer>
+    </div>
+</div>
+
+<script>
+function storeApp() {
+    return {
+        stores: [],
+        rules: [],
+        storeStats: null,
+        storeStatsTitle: '',
+        storeModalActive: false,
+        ruleModalActive: false,
+        storeForm: {},
+        ruleForm: {},
+        init() {
+            this.loadStores();
+            this.loadRules();
+        },
+        async loadStores() {
+            const r = await fetch('/api/stores');
+            const d = await r.json();
+            if (d.success) this.stores = d.data || [];
+        },
+        async loadRules() {
+            const r = await fetch('/api/clearing-rules');
+            const d = await r.json();
+            if (d.success) this.rules = d.data || [];
+        },
+        async loadStoreStats(s) {
+            const r = await fetch('/api/stores/' + s.id + '/stats');
+            const d = await r.json();
+            if (d.success) {
+                this.storeStats = d.data;
+                this.storeStatsTitle = s.name + ' - 门店统计';
+            }
+        },
+        showStoreModal() {
+            this.storeForm = {store_code:'', name:'', address:'', contact_phone:'', manager_name:'', is_headquarters:false, is_active:true};
+            this.storeModalActive = true;
+        },
+        editStore(s) {
+            this.storeForm = {...s};
+            this.storeModalActive = true;
+        },
+        async saveStore() {
+            let r, d;
+            if (this.storeForm.id) {
+                r = await fetch('/api/stores/' + this.storeForm.id, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(this.storeForm)});
+            } else {
+                r = await fetch('/api/stores', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(this.storeForm)});
+            }
+            d = await r.json();
+            alert(d.message);
+            if (d.success) { this.storeModalActive = false; this.loadStores(); }
+        },
+        showRuleModal() {
+            this.ruleForm = {name:'', rule_type:'default', source_store_id:'', target_store_id:'', source_ratio:50, target_ratio:50, hq_subsidy_ratio:0, hq_subsidy_max:0, priority:0, description:'', is_active:true};
+            this.ruleModalActive = true;
+        },
+        editRule(r) {
+            this.ruleForm = {...r, target_store_id: r.target_store_id || ''};
+            this.ruleModalActive = true;
+        },
+        async saveRule() {
+            let r, d;
+            if (this.ruleForm.id) {
+                r = await fetch('/api/clearing-rules/' + this.ruleForm.id, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(this.ruleForm)});
+            } else {
+                r = await fetch('/api/clearing-rules', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(this.ruleForm)});
+            }
+            d = await r.json();
+            alert(d.message);
+            if (d.success) { this.ruleModalActive = false; this.loadRules(); }
+        },
+        async deleteRule(id) {
+            if (!confirm('确定删除该清分规则？')) return;
+            const r = await fetch('/api/clearing-rules/' + id, {method:'DELETE'});
+            const d = await r.json();
+            alert(d.message);
+            if (d.success) this.loadRules();
+        }
+    };
+}
+</script>
+</body>
+</html>

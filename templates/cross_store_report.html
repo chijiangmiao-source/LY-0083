@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>跨店清分报表</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.0/dist/cdn.min.js"></script>
+    <style>
+        body { background-color: #f5f5f5; min-height: 100vh; }
+        .navbar-brand-title { font-weight: 700; font-size: 1.2rem; }
+        .warning-badge { display: inline-block; min-width: 22px; padding: 0 6px; line-height: 22px; text-align: center; border-radius: 11px; background: #f14668; color: #fff; font-size: 12px; font-weight: bold; margin-left: 4px; }
+        .tag-hq { background-color: #667eea !important; color: #fff !important; }
+        .card-table { overflow-x: auto; }
+    </style>
+</head>
+<body style="background-color: #f5f5f5; min-height: 100vh;" x-data="reportApp()">
+<nav class="navbar is-primary" role="navigation">
+    <div class="navbar-brand">
+        <a class="navbar-item navbar-brand-title" href="/">🛁 澡堂手牌管理系统</a>
+    </div>
+    <div class="navbar-menu">
+        <div class="navbar-start">
+            <a class="navbar-item" href="/">首页</a>
+            <a class="navbar-item" href="/bath-areas">浴区管理</a>
+            <a class="navbar-item" href="/wristbands">手牌配置</a>
+            <a class="navbar-item" href="/issue">入场发牌</a>
+            <a class="navbar-item" href="/return">退牌结算</a>
+            <a class="navbar-item" href="/report-loss">遗失申报</a>
+            <a class="navbar-item" href="/reissue-review">补办审核</a>
+            <a class="navbar-item" href="/members">会员管理</a>
+            <a class="navbar-item" href="/wristband-tracking">手牌追踪</a>
+            <a class="navbar-item" href="/warnings">预警中心
+                <span class="warning-badge" x-show="warningStats && warningStats.total_unread > 0" x-text="warningStats.total_unread"></span>
+            </a>
+            <a class="navbar-item" href="/shift-summary">交接汇总</a>
+            <a class="navbar-item" href="/store-management">门店管理</a>
+            <a class="navbar-item is-active" href="/cross-store-report">清分报表</a>
+        </div>
+        <div class="navbar-end">
+            <div class="navbar-item">
+                <span class="mr-3">欢迎，{{user['full_name']}}</span>
+                <a class="button is-light" href="/logout">退出登录</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+<section class="section">
+    <div class="container">
+        <h1 class="title">📊 跨店清分报表与总部看板</h1>
+
+        <div class="box">
+            <h2 class="subtitle">总部门店日汇总</h2>
+            <table class="table is-fullwidth is-striped">
+                <thead>
+                    <tr>
+                        <th>门店</th><th>本店实收</th><th>跨店收入</th><th>跨店抵扣</th>
+                        <th>今日合计</th><th>待清算</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="s in storeSummary" :key="s.id">
+                        <tr>
+                            <td>
+                                <strong x-text="s.name"></strong>
+                                <span class="tag tag-hq is-small ml-1" x-show="s.is_headquarters">总部</span>
+                            </td>
+                            <td>¥ <span x-text="parseFloat(s.today_local_income).toFixed(2)"></span></td>
+                            <td>¥ <span x-text="parseFloat(s.today_cross_income).toFixed(2)"></span></td>
+                            <td>¥ <span x-text="parseFloat(s.today_cross_deduction).toFixed(2)"></span></td>
+                            <td><strong>¥ <span x-text="parseFloat(s.today_total).toFixed(2)"></span></strong></td>
+                            <td>
+                                <span class="tag is-danger is-light" x-show="parseFloat(s.pending_clearing) > 0">
+                                    ¥ <span x-text="parseFloat(s.pending_clearing).toFixed(2)"></span>
+                                </span>
+                                <span class="tag is-success is-light" x-show="parseFloat(s.pending_clearing) == 0">已清</span>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="box">
+            <div class="level">
+                <div class="level-left"><h2 class="subtitle">跨店记录明细</h2></div>
+                <div class="level-right">
+                    <div class="field has-addons">
+                        <div class="control"><input class="input is-small" type="date" x-model="filterStart"></div>
+                        <div class="control"><input class="input is-small" type="date" x-model="filterEnd"></div>
+                        <div class="control">
+                            <div class="select is-small">
+                                <select x-model="filterStatus">
+                                    <option value="">全部状态</option>
+                                    <option value="pending">待结算</option>
+                                    <option value="settled">已结算</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="control">
+                            <button class="button is-small is-info" @click="loadRecords()">查询</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="buttons mb-3">
+                <button class="button is-warning is-small" @click="batchClearing()"
+                        x-show="selectedRecords.length > 0"
+                        x-text="'批量结算 (' + selectedRecords.length + '条)'"></button>
+                <button class="button is-info is-small" @click="loadRecords()">刷新</button>
+            </div>
+
+            <div class="card-table">
+                <table class="table is-fullwidth is-striped is-size-7">
+                    <thead>
+                        <tr>
+                            <th><input type="checkbox" @change="toggleSelectAll($event)"></th>
+                            <th>时间</th><th>会员</th><th>归属门店</th><th>消费门店</th>
+                            <th>操作类型</th><th>原始金额</th><th>抵扣金额</th>
+                            <th>清分规则</th><th>状态</th><th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="r in records" :key="r.id">
+                            <tr>
+                                <td><input type="checkbox" x-model="r._selected" @change="updateSelection()"></td>
+                                <td x-text="formatTime(r.created_at)"></td>
+                                <td>
+                                    <span x-text="r.member_name || '-'"></span>
+                                    <span class="is-size-7 has-text-grey" x-show="r.member_no" x-text="'(' + r.member_no + ')'"></span>
+                                </td>
+                                <td x-text="r.home_store_name"></td>
+                                <td x-text="r.consume_store_name"></td>
+                                <td x-text="opTypeText(r.operation_type)"></td>
+                                <td x-text="'¥' + parseFloat(r.original_amount).toFixed(2)"></td>
+                                <td><strong x-text="'¥' + parseFloat(r.deduction_amount).toFixed(2)"></strong></td>
+                                <td x-text="r.rule_name || '-'"></td>
+                                <td>
+                                    <span class="tag is-warning is-small" x-show="r.clearing_status == 'pending'">待结算</span>
+                                    <span class="tag is-success is-small" x-show="r.clearing_status == 'settled'">已结算</span>
+                                </td>
+                                <td>
+                                    <button class="button is-small is-warning" x-show="r.clearing_status == 'pending'"
+                                            @click="clearRecord(r.id)">结算</button>
+                                    <span class="is-size-7 has-text-grey" x-show="r.clearing_status == 'settled'"
+                                          x-text="formatTime(r.settled_at)"></span>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <p x-show="records.length == 0" class="has-text-grey py-4">暂无跨店记录</p>
+            </div>
+        </div>
+
+        <div class="box">
+            <h2 class="subtitle">清分明细</h2>
+            <div class="field has-addons mb-3">
+                <div class="control">
+                    <div class="select is-small">
+                        <select x-model="clearingStoreFilter">
+                            <option value="">全部门店</option>
+                            <template x-for="s in storeSummary" :key="s.id">
+                                <option :value="s.id" x-text="s.name"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+                <div class="control">
+                    <div class="select is-small">
+                        <select x-model="clearingStatusFilter">
+                            <option value="">全部状态</option>
+                            <option value="pending">待结算</option>
+                            <option value="settled">已结算</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="control">
+                    <button class="button is-small is-info" @click="loadClearingRecords()">查询</button>
+                </div>
+            </div>
+            <div class="card-table">
+                <table class="table is-fullwidth is-striped is-size-7">
+                    <thead>
+                        <tr>
+                            <th>门店</th><th>金额类型</th><th>金额</th><th>关联会员</th>
+                            <th>操作类型</th><th>状态</th><th>结算时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="c in clearingRecords" :key="c.id">
+                            <tr>
+                                <td x-text="c.store_name"></td>
+                                <td x-text="amountTypeText(c.amount_type)"></td>
+                                <td><strong x-text="'¥' + parseFloat(c.amount).toFixed(2)"></strong></td>
+                                <td x-text="c.member_name || '-'"></td>
+                                <td x-text="opTypeText(c.operation_type)"></td>
+                                <td>
+                                    <span class="tag is-warning is-small" x-show="c.status == 'pending'">待结算</span>
+                                    <span class="tag is-success is-small" x-show="c.status == 'settled'">已结算</span>
+                                </td>
+                                <td x-text="c.settled_at ? formatTime(c.settled_at) : '-'"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</section>
+
+<script>
+function reportApp() {
+    return {
+        storeSummary: [],
+        records: [],
+        clearingRecords: [],
+        selectedRecords: [],
+        filterStart: '',
+        filterEnd: '',
+        filterStatus: '',
+        clearingStoreFilter: '',
+        clearingStatusFilter: '',
+        init() {
+            this.loadStoreSummary();
+            this.loadRecords();
+            this.loadClearingRecords();
+        },
+        async loadStoreSummary() {
+            const r = await fetch('/api/hq/store-summary');
+            const d = await r.json();
+            if (d.success) this.storeSummary = d.data || [];
+        },
+        async loadRecords() {
+            let url = '/api/cross-store/records?limit=200';
+            if (this.filterStart) url += '&start_date=' + this.filterStart;
+            if (this.filterEnd) url += '&end_date=' + this.filterEnd;
+            if (this.filterStatus) url += '&status=' + this.filterStatus;
+            const r = await fetch(url);
+            const d = await r.json();
+            if (d.success) {
+                this.records = (d.data || []).map(x => ({...x, _selected: false}));
+                this.selectedRecords = [];
+            }
+        },
+        async loadClearingRecords() {
+            let url = '/api/cross-store/clearing-records?';
+            if (this.clearingStoreFilter) url += 'store_id=' + this.clearingStoreFilter + '&';
+            if (this.clearingStatusFilter) url += 'status=' + this.clearingStatusFilter;
+            const r = await fetch(url);
+            const d = await r.json();
+            if (d.success) this.clearingRecords = d.data || [];
+        },
+        async clearRecord(id) {
+            if (!confirm('确定对该记录进行清分结算？')) return;
+            const r = await fetch('/api/cross-store/clearing/' + id, {method:'POST'});
+            const d = await r.json();
+            alert(d.message);
+            if (d.success) { this.loadRecords(); this.loadStoreSummary(); this.loadClearingRecords(); }
+        },
+        async batchClearing() {
+            if (!confirm('确定批量结算选中的' + this.selectedRecords.length + '条记录？')) return;
+            const r = await fetch('/api/cross-store/batch-clearing', {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({record_ids: this.selectedRecords})
+            });
+            const d = await r.json();
+            alert(d.message);
+            if (d.success) { this.loadRecords(); this.loadStoreSummary(); this.loadClearingRecords(); }
+        },
+        toggleSelectAll(e) {
+            const checked = e.target.checked;
+            this.records.forEach(r => r._selected = checked);
+            this.updateSelection();
+        },
+        updateSelection() {
+            this.selectedRecords = this.records.filter(r => r._selected).map(r => r.id);
+        },
+        opTypeText(t) {
+            const m = {'issue':'跨店发牌','return_settle':'跨店退牌结算','reissue':'跨店补办',
+                       'use_package':'跨店套餐','use_balance':'跨店余额'};
+            return m[t] || t;
+        },
+        amountTypeText(t) {
+            const m = {'source_income':'归属门店收入','target_income':'消费门店收入','hq_subsidy':'总部补贴'};
+            return m[t] || t;
+        },
+        formatTime(t) {
+            if (!t) return '';
+            const d = new Date(t);
+            return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+                + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+        }
+    };
+}
+</script>
+</body>
+</html>

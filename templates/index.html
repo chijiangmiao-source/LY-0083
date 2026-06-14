@@ -23,7 +23,7 @@
         .scroll-warning-list { max-height: 420px; overflow-y: auto; }
     </style>
 </head>
-<body x-data="indexApp()" style="background-color: #f5f5f5; min-height: 100vh;">
+<body x-data="indexApp()" style="background-color: #f5f5f5; min-height: 100vh;" x-init="crossStoreStats = !{cross_store_stats_json || '{}'}">
 <nav class="navbar is-primary" role="navigation">
     <div class="navbar-brand">
         <a class="navbar-item navbar-brand-title" href="/">🛁 澡堂手牌管理系统</a>
@@ -43,6 +43,8 @@
                 <span class="warning-badge" x-show="warningStats && warningStats.total_unread > 0" x-text="warningStats.total_unread"></span>
             </a>
             <a class="navbar-item" href="/shift-summary">交接汇总</a>
+            <a class="navbar-item" href="/store-management">门店管理</a>
+            <a class="navbar-item" href="/cross-store-report">清分报表</a>
         </div>
         <div class="navbar-end">
             <div class="navbar-item">
@@ -101,6 +103,8 @@
                     <span class="warning-badge" x-show="warningStats && warningStats.total_unread > 0" x-text="warningStats.total_unread"></span>
                 </a>
                 <a class="button is-dark is-medium" href="/shift-summary">交接汇总</a>
+                <a class="button is-danger is-medium" href="/store-management">门店管理</a>
+                <a class="button is-warning is-medium" href="/cross-store-report">清分报表</a>
             </div>
         </div>
 
@@ -163,6 +167,43 @@
                         <p class="heading">今日抵扣合计</p>
                         <p class="title is-5">¥ {{ '%.2f'|format(member_stats['today_balance_deduction'] + member_stats['today_package_deduction']) }}</p>
                         <p class="is-size-7 has-text-grey">余额¥{{ '%.2f'|format(member_stats['today_balance_deduction']) }} + 套餐¥{{ '%.2f'|format(member_stats['today_package_deduction']) }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="box" style="background: linear-gradient(135deg, #fff5f5 0%, #fffbf0 100%); border-color: #ff6b6b;">
+            <div class="columns is-mobile is-vcentered mb-0">
+                <div class="column">
+                    <h2 class="subtitle mb-0">🏪 跨店清分数据</h2>
+                </div>
+                <div class="column is-narrow">
+                    <a class="button is-small is-danger is-outlined" href="/cross-store-report">查看清分报表 →</a>
+                </div>
+            </div>
+            <div class="columns mt-3">
+                <div class="column">
+                    <div class="notification is-success is-light py-3 px-3">
+                        <p class="heading is-size-7">本店实收</p>
+                        <p class="is-size-4 has-text-weight-bold has-text-success">¥ {{ '%.2f'|format(cross_store_stats['today_local_income']) }}</p>
+                    </div>
+                </div>
+                <div class="column">
+                    <div class="notification is-info is-light py-3 px-3">
+                        <p class="heading is-size-7">跨店收入</p>
+                        <p class="is-size-4 has-text-weight-bold has-text-info">¥ {{ '%.2f'|format(cross_store_stats['today_cross_income']) }}</p>
+                    </div>
+                </div>
+                <div class="column">
+                    <div class="notification is-warning is-light py-3 px-3">
+                        <p class="heading is-size-7">跨店抵扣</p>
+                        <p class="is-size-4 has-text-weight-bold has-text-warning-dark">¥ {{ '%.2f'|format(cross_store_stats['today_cross_deduction']) }}</p>
+                    </div>
+                </div>
+                <div class="column">
+                    <div class="notification is-danger is-light py-3 px-3">
+                        <p class="heading is-size-7">待清算金额</p>
+                        <p class="is-size-4 has-text-weight-bold has-text-danger">¥ {{ '%.2f'|format(cross_store_stats['pending_clearing']) }}</p>
                     </div>
                 </div>
             </div>
@@ -274,6 +315,7 @@ function indexApp() {
     return {
         warningStats: !{warning_stats_json || '{}'},
         recentWarnings: !{recent_warnings_json || '[]'},
+        crossStoreStats: !{cross_store_stats_json || '{}'},
         async refresh() {
             try {
                 await fetch('/api/warnings/refresh', {method:'POST'});
@@ -321,7 +363,8 @@ function indexApp() {
                 'abnormal_discount':'异常优惠',
                 'balance_anomaly':'储值异常',
                 'topup_anomaly':'充值频次异常',
-                'member_upgrade':'会员升级'
+                'member_upgrade':'会员升级',
+                'cross_store_discount_anomaly':'跨店优惠异常'
             };
             return m[t] || t;
         },
